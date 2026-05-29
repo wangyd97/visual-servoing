@@ -1,0 +1,205 @@
+from dataclasses import dataclass
+
+import numpy as np
+
+
+def to_vec6(value, name: str) -> np.ndarray:
+    """
+    将标量或长度为 6 的 list/tuple/ndarray 转为 R^6 向量。
+    标量会自动扩展为 6 个相同分量。
+    """
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return np.full(6, float(arr), dtype=float)
+    arr = arr.reshape(-1)
+    if arr.size != 6:
+        raise ValueError(f"{name} 必须是标量或长度为 6 的向量，当前长度为 {arr.size}: {value}")
+    return arr.astype(float)
+
+
+def vec6_to_str(value, precision: int = 3) -> str:
+    """用于打印 R^6 参数。"""
+    arr = np.asarray(value, dtype=float).reshape(-1)
+    return "[" + ", ".join(f"{v:.{precision}g}" for v in arr) + "]"
+
+
+def vec6_from_pos_rot(pos_value: float, rot_value: float) -> np.ndarray:
+    """兼容旧参数：平移/旋转可分别为标量或 3 维向量。"""
+    pos = to_vec3(pos_value, "pos_value")
+    rot = to_vec3(rot_value, "rot_value")
+    return np.concatenate([pos, rot]).astype(float)
+
+
+def to_vec3(value, name: str) -> np.ndarray:
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return np.full(3, float(arr), dtype=float)
+    arr = arr.reshape(-1)
+    if arr.size != 3:
+        raise ValueError(f"{name} 必须是标量或长度为 3 的向量，当前长度为 {arr.size}: {value}")
+    return arr.astype(float)
+
+
+@dataclass
+class PBVSConfig:
+    tag_size: float = 0.05
+    detect_stride: int = 1
+    apriltag_nthreads: int = 1
+    apriltag_quad_decimate: float = 1.0
+    apriltag_quad_sigma: float = 0.4
+    enable_visualization: bool = True
+    visualization_stride: int = 1
+
+    interaction_matrix: str = "L2"
+
+    edot_method: str = "edot2"
+
+    pos_threshold: float = 0.005
+    rot_threshold: float = 0.02
+    stable_frames: int = 10
+    slow_after_convergence: bool = True
+    convergence_slowdown_frames: int = 5
+    convergence_velocity_scale: float = 0.1
+
+    max_runtime: float = 0.0
+
+    max_linear_vel: float = 0.80
+    max_angular_vel: float = 0.80
+
+    enable_velocity_leak: bool = True
+    velocity_leak_lambda: float = 2.0
+
+    enable_feature_kalman: bool = False
+    feature_kalman_meas_std: object = (0.0015, 0.0015, 0.0025, 0.008, 0.008, 0.008)
+    feature_kalman_process_std: object = (1.0, 1.0, 1.0, 4.0, 4.0, 4.0)
+    feature_kalman_use_velocity: bool = False
+
+    controller_mode: str = "SOPDPSMC"
+
+    # R6 参数顺序: [x, y, z, rx, ry, rz]
+    kp: object = 1.0
+    kd: object = 2.0
+
+    accel_limit: object = None
+    accel_limit_pos: object = float("inf")
+    accel_limit_rot: object = float("inf")
+
+    proxy_H: object = None
+    proxy_H_pos: float = 0.8
+    proxy_H_rot: float = 0.8
+    enable_adaptive_proxy_H: bool = False
+    adaptive_proxy_H_min: object = None
+    adaptive_proxy_H_max: object = None
+    adaptive_proxy_feature_vel_limit: object = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
+
+    plot_save_path: str = "pbvs_error_plot.png"
+    trajectory_plot_save_path: str = ""
+    csv_save_path: str = "pbvs_state_log.csv"
+    enable_csv_logging: bool = True
+    enable_memory_log: bool = True
+    enable_final_plots: bool = True
+    csv_flush_interval: int = 50
+    status_print_interval: int = 1
+
+    def __post_init__(self):
+        self.detect_stride = max(1, int(self.detect_stride))
+        self.apriltag_nthreads = max(1, int(self.apriltag_nthreads))
+        self.apriltag_quad_decimate = max(1.0, float(self.apriltag_quad_decimate))
+        self.apriltag_quad_sigma = max(0.0, float(self.apriltag_quad_sigma))
+        self.visualization_stride = max(1, int(self.visualization_stride))
+        self.slow_after_convergence = bool(self.slow_after_convergence)
+        self.convergence_slowdown_frames = max(0, int(self.convergence_slowdown_frames))
+        self.convergence_velocity_scale = float(np.clip(self.convergence_velocity_scale, 0.0, 1.0))
+        self.enable_csv_logging = bool(self.enable_csv_logging)
+        self.enable_memory_log = bool(self.enable_memory_log)
+        self.enable_final_plots = bool(self.enable_final_plots)
+        self.status_print_interval = max(1, int(self.status_print_interval))
+
+        self.kp = to_vec6(self.kp, "kp")
+        self.kd = to_vec6(self.kd, "kd")
+
+        self.enable_feature_kalman = bool(self.enable_feature_kalman)
+        self.feature_kalman_meas_std = np.maximum(
+            to_vec6(self.feature_kalman_meas_std, "feature_kalman_meas_std"),
+            1e-9
+        )
+        self.feature_kalman_process_std = np.maximum(
+            to_vec6(self.feature_kalman_process_std, "feature_kalman_process_std"),
+            1e-9
+        )
+        self.feature_kalman_use_velocity = bool(self.feature_kalman_use_velocity)
+
+        if self.accel_limit is None:
+            default_accel = float("inf") if self.controller_mode.upper() == "SOPD" else 1.5
+            accel_pos_value = default_accel if self.accel_limit_pos is None else self.accel_limit_pos
+            accel_rot_value = default_accel if self.accel_limit_rot is None else self.accel_limit_rot
+            accel_pos = to_vec3(accel_pos_value, "accel_limit_pos")
+            accel_rot = to_vec3(accel_rot_value, "accel_limit_rot")
+            self.accel_limit = np.concatenate([accel_pos, accel_rot])
+        else:
+            self.accel_limit = to_vec6(self.accel_limit, "accel_limit")
+        self.accel_limit_pos = self.accel_limit[:3].copy()
+        self.accel_limit_rot = self.accel_limit[3:].copy()
+
+        if self.proxy_H is None:
+            self.proxy_H = vec6_from_pos_rot(self.proxy_H_pos, self.proxy_H_rot)
+        else:
+            self.proxy_H = to_vec6(self.proxy_H, "proxy_H")
+            self.proxy_H_pos = float(np.mean(self.proxy_H[:3]))
+            self.proxy_H_rot = float(np.mean(self.proxy_H[3:]))
+
+        self.enable_adaptive_proxy_H = bool(self.enable_adaptive_proxy_H)
+        if self.adaptive_proxy_H_min is None:
+            self.adaptive_proxy_H_min = self.proxy_H.copy()
+        else:
+            self.adaptive_proxy_H_min = to_vec6(self.adaptive_proxy_H_min, "adaptive_proxy_H_min")
+        if self.adaptive_proxy_H_max is None:
+            self.adaptive_proxy_H_max = np.maximum(2.0 * self.adaptive_proxy_H_min,
+                                                   self.adaptive_proxy_H_min + 1e-9)
+        else:
+            self.adaptive_proxy_H_max = np.maximum(
+                to_vec6(self.adaptive_proxy_H_max, "adaptive_proxy_H_max"),
+                self.adaptive_proxy_H_min + 1e-9,
+            )
+        self.adaptive_proxy_feature_vel_limit = np.maximum(
+            to_vec6(self.adaptive_proxy_feature_vel_limit, "adaptive_proxy_feature_vel_limit"),
+            1e-9,
+        )
+
+
+@dataclass
+class TargetPose:
+    name: str
+    desired_rotation: np.ndarray
+    desired_translation: np.ndarray
+
+    def __post_init__(self):
+        self.T_des = np.eye(4)
+        self.T_des[:3, :3] = self.desired_rotation
+        self.T_des[:3, 3] = self.desired_translation
+CSV_COLUMNS = [
+    "t", "frame_idx", "target",
+    "err_pos_mm", "ex_mm", "ey_mm", "ez_mm",
+    "err_rot_deg", "rx_deg", "ry_deg", "rz_deg",
+    "s0", "s1", "s2", "s3", "s4", "s5",
+    "sraw0", "sraw1", "sraw2", "sraw3", "sraw4", "sraw5",
+    "sdothat0", "sdothat1", "sdothat2", "sdothat3", "sdothat4", "sdothat5",
+    "kf_enabled", "kf_res_norm",
+    "sstar0", "sstar1", "sstar2", "sstar3", "sstar4", "sstar5",
+    "sdotstar0", "sdotstar1", "sdotstar2", "sdotstar3", "sdotstar4", "sdotstar5",
+    "sddotstar0", "sddotstar1", "sddotstar2", "sddotstar3", "sddotstar4", "sddotstar5",
+    "edot0", "edot1_val", "edot2_val", "edot3_val", "edot4_val", "edot5_val",
+    "astar0", "astar1", "astar2", "astar3", "astar4", "astar5",
+    "Phi0", "Phi1", "Phi2", "Phi3", "Phi4", "Phi5",
+    "accel_saturated",
+    "proxy_s0", "proxy_s1", "proxy_s2", "proxy_s3", "proxy_s4", "proxy_s5",
+    "proxy_H0", "proxy_H1", "proxy_H2", "proxy_H3", "proxy_H4", "proxy_H5",
+    "proxy_b0", "proxy_b1", "proxy_b2", "proxy_b3", "proxy_b4", "proxy_b5",
+    "uc0", "uc1", "uc2", "uc3", "uc4", "uc5",
+    "vtcp0", "vtcp1", "vtcp2", "vtcp3", "vtcp4", "vtcp5",
+    "vtcp_lin_norm", "vtcp_ang_norm",
+    "udotc0", "udotc1", "udotc2", "udotc3", "udotc4", "udotc5",
+    "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
+    "cx0", "cy0", "cx1", "cy1", "cx2", "cy2", "cx3", "cy3",
+    "stable_count", "converged", "mode", "im_type", "edot_method",
+]
