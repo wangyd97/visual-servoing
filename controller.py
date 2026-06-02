@@ -1,5 +1,4 @@
 import csv
-import math
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -15,68 +14,13 @@ from .config import CSV_COLUMNS, PBVSConfig, TargetPose, vec6_to_str
 from .geometry import (
     compute_L2s,
     compute_L2_b,
+    compute_N2s,
     get_tag_3d_corners,
     inv_T,
     project_3d_to_2d,
 )
 from .psmc import PSMCPDProxy
 from .vision import AprilTagEstimator, draw_axis, draw_axis_colored
-
-
-class FeatureKalmanFilter:
-    def __init__(self, meas_std: np.ndarray, process_std: np.ndarray, dt: float):
-        self.meas_std = np.asarray(meas_std, dtype=float).reshape(6)
-        self.process_std = np.asarray(process_std, dtype=float).reshape(6)
-        self.dt = float(dt)
-        self.x = np.zeros(12)
-        self.P = np.eye(12)
-        self._initialized = False
-
-    def reset(self):
-        self.x[:] = 0.0
-        self.P = np.eye(12)
-        self._initialized = False
-
-    @property
-    def initialized(self) -> bool:
-        return self._initialized
-
-    def update(self, z: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        z = np.asarray(z, dtype=float).reshape(6)
-        if not self._initialized:
-            self.x[:6] = z
-            self.x[6:] = 0.0
-            self.P = np.diag(np.concatenate([
-                self.meas_std ** 2,
-                np.maximum(self.process_std ** 2, 1e-9),
-            ]))
-            self._initialized = True
-            return self.x[:6].copy(), self.x[6:].copy(), np.zeros(6)
-
-        dt = self.dt
-        F = np.eye(12)
-        F[:6, 6:] = dt * np.eye(6)
-
-        q = self.process_std ** 2
-        Q = np.zeros((12, 12))
-        Q[:6, :6] = np.diag(0.25 * dt**4 * q)
-        Q[:6, 6:] = np.diag(0.5 * dt**3 * q)
-        Q[6:, :6] = np.diag(0.5 * dt**3 * q)
-        Q[6:, 6:] = np.diag(dt**2 * q)
-
-        self.x = F @ self.x
-        self.P = F @ self.P @ F.T + Q
-
-        H = np.zeros((6, 12))
-        H[:, :6] = np.eye(6)
-        R_meas = np.diag(self.meas_std ** 2)
-        residual = z - H @ self.x
-        S = H @ self.P @ H.T + R_meas
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ residual
-        self.P = (np.eye(12) - K @ H) @ self.P
-
-        return self.x[:6].copy(), self.x[6:].copy(), residual.copy()
 
 
 class PBVSController:
@@ -108,15 +52,6 @@ class PBVSController:
         self._last_s_dot_star = np.zeros(6)
         self._last_s_ddot_star = np.zeros(6)
         self._last_accel_saturated = False
-        self._feature_kf = FeatureKalmanFilter(
-            self.cfg.feature_kalman_meas_std,
-            self.cfg.feature_kalman_process_std,
-            self.dt
-        )
-        self._last_s_raw = np.zeros(6)
-        self._last_s_hat = np.zeros(6)
-        self._last_s_dot_hat = np.zeros(6)
-        self._last_kf_residual = np.zeros(6)
 
         self.stable_cnt = 0
         self._u_c_integrated = np.zeros(6)
@@ -144,18 +79,14 @@ class PBVSController:
         self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
         self._last_u_dot_c = np.zeros(6)
+        self._last_s_for_diff: Optional[np.ndarray] = None
+        self._last_s_diff_time: Optional[float] = None
+        self._s_dot_diff_filtered = np.zeros(6)
+        self._u_o_filtered = np.zeros(6)
+        self._last_u_o_for_diff: Optional[np.ndarray] = None
+        self._last_u_o_diff_time: Optional[float] = None
+        self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
-
-        assert self.cfg.interaction_matrix == "L2", \
-            f"当前版本只支持 interaction_matrix='L2'，当前: {self.cfg.interaction_matrix}"
-        assert self.cfg.edot_method in ("edot1", "edot2"), \
-            f"edot_method 须为 'edot1'/'edot2'，当前: {self.cfg.edot_method}"
-
-        if self.cfg.enable_feature_kalman:
-            print("🧩 Feature Kalman: ON "
-                  f"(meas_std={vec6_to_str(self.cfg.feature_kalman_meas_std, 3)}, "
-                  f"process_std={vec6_to_str(self.cfg.feature_kalman_process_std, 3)}, "
-                  f"use_velocity={self.cfg.feature_kalman_use_velocity})")
 
     def _open_csv(self):
         if not self.cfg.enable_csv_logging:
@@ -210,16 +141,18 @@ class PBVSController:
         self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
         self._last_u_dot_c = np.zeros(6)
+        self._last_s_for_diff = None
+        self._last_s_diff_time = None
+        self._s_dot_diff_filtered = np.zeros(6)
+        self._u_o_filtered = np.zeros(6)
+        self._last_u_o_for_diff = None
+        self._last_u_o_diff_time = None
+        self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
         self._last_s_star = np.zeros(6)
         self._last_s_dot_star = np.zeros(6)
         self._last_s_ddot_star = np.zeros(6)
         self._last_accel_saturated = False
-        self._feature_kf.reset()
-        self._last_s_raw = np.zeros(6)
-        self._last_s_hat = np.zeros(6)
-        self._last_s_dot_hat = np.zeros(6)
-        self._last_kf_residual = np.zeros(6)
 
     def _desired_T(self) -> np.ndarray:
         if self._active_T_des is not None:
@@ -247,11 +180,8 @@ class PBVSController:
                                R_base_cam: np.ndarray,
                                s_star_override: np.ndarray = None):
         T_des = self._desired_T()
-        # print(f"Current translation:\n{T_current[:3, 3]}")
-        # print(f"Current rotation (Euler angles, degrees):\n{Rotation.from_matrix(T_current[:3, :3]).as_euler('xyz', degrees=True)}")
         T_err = T_des @ inv_T(T_current)
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
-        # print(f"Desired rotation (Euler angles, degrees):\n{Rotation.from_quat(q_des).as_euler('xyz', degrees=True)}")
         q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
         if q_des[3] < 0:
             q_des = -q_des
@@ -264,8 +194,7 @@ class PBVSController:
             s_star = np.asarray(s_star_override, dtype=float).reshape(6).copy()
 
         s = np.concatenate([c_p_oc, q_oc[:3]])
-        # print(f"s:\n{s}")
-        e = s - s_star
+        e = s_star - s
 
         try:
             Ls_inv = np.linalg.inv(Ls)
@@ -274,30 +203,58 @@ class PBVSController:
 
         return s, s_star, e, q_oc, c_p_oc, Ls, Ls_inv, T_err
 
-    def _filter_feature(self, s_raw: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        self._last_s_raw = np.asarray(s_raw, dtype=float).reshape(6).copy()
-        if not self.cfg.enable_feature_kalman:
-            self._last_s_hat = self._last_s_raw.copy()
-            self._last_s_dot_hat = np.zeros(6)
-            self._last_kf_residual = np.zeros(6)
-            return self._last_s_hat.copy(), self._last_s_dot_hat.copy()
-
-        s_hat, s_dot_hat, residual = self._feature_kf.update(self._last_s_raw)
-        self._last_s_hat = s_hat.copy()
-        self._last_s_dot_hat = s_dot_hat.copy()
-        self._last_kf_residual = residual.copy()
-        return s_hat, s_dot_hat
-
-    def _compute_edot(self, Ls: np.ndarray,
-                      u_c: np.ndarray,
-                      s_dot_star: np.ndarray) -> np.ndarray:
-        if self.cfg.edot_method == "edot1":
-            return Ls @ u_c
-        else:
-            return Ls @ u_c - s_dot_star
-
     def _current_u_c(self) -> np.ndarray:
         return self._last_u_c.copy()
+
+    def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
+        """Eq. (42a): obtain s_dot from a filtered visual-feature difference."""
+        s = np.asarray(s, dtype=float).reshape(6)
+        now = time.perf_counter()
+        if self._last_s_for_diff is None or self._last_s_diff_time is None:
+            self._s_dot_diff_filtered = np.zeros(6)
+        else:
+            dt = max(now - self._last_s_diff_time, 1e-4)
+            s_dot_raw = (s - self._last_s_for_diff) / dt
+            tau = 0.08
+            beta = tau / (tau + dt)
+            self._s_dot_diff_filtered = (
+                beta * self._s_dot_diff_filtered
+                + (1.0 - beta) * s_dot_raw
+            )
+        self._last_s_for_diff = s.copy()
+        self._last_s_diff_time = now
+        return self._s_dot_diff_filtered.copy()
+
+    def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
+        u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
+        deadband = np.array([0.015, 0.015, 0.015, 0.05, 0.05, 0.05])
+        limits = np.array([0.50, 0.50, 0.50, 2.0, 2.0, 2.0])
+        u_o[np.abs(u_o) < deadband] = 0.0
+        u_o = np.clip(u_o, -limits, limits)
+        tau = 0.12
+        beta = tau / (tau + self.dt)
+        self._u_o_filtered = beta * self._u_o_filtered + (1.0 - beta) * u_o
+        return self._u_o_filtered.copy()
+
+    def _compute_u_dot_o_by_difference(self, u_o: np.ndarray) -> np.ndarray:
+        u_o = np.asarray(u_o, dtype=float).reshape(6)
+        now = time.perf_counter()
+        if self._last_u_o_for_diff is None or self._last_u_o_diff_time is None:
+            self._u_dot_o_filtered = np.zeros(6)
+        else:
+            dt = max(now - self._last_u_o_diff_time, 1e-4)
+            u_dot_o_raw = (u_o - self._last_u_o_for_diff) / dt
+            limits = np.array([2.0, 2.0, 2.0, 8.0, 8.0, 8.0])
+            u_dot_o_raw = np.clip(u_dot_o_raw, -limits, limits)
+            tau = 0.20
+            beta = tau / (tau + dt)
+            self._u_dot_o_filtered = (
+                beta * self._u_dot_o_filtered
+                + (1.0 - beta) * u_dot_o_raw
+            )
+        self._last_u_o_for_diff = u_o.copy()
+        self._last_u_o_diff_time = now
+        return self._u_dot_o_filtered.copy()
 
     def _update_adaptive_proxy_H(self, e: np.ndarray) -> np.ndarray:
         if not self.cfg.enable_adaptive_proxy_H:
@@ -316,9 +273,30 @@ class PBVSController:
     def _compute_u_dot_c(self, Phi: np.ndarray, q_oc: np.ndarray,
                   c_p_oc: np.ndarray, Ls: np.ndarray,
                   Ls_inv: np.ndarray, u_c: np.ndarray,
-                  R_base_cam: np.ndarray) -> np.ndarray:
-        """求 base-frame camera acceleration u_dot；按 PDF eq.(4) 使用 s_ddot=L*u_dot+b。"""
-        return Ls_inv @ (Phi - compute_L2_b(c_p_oc, q_oc, u_c, R_base_cam))
+                  u_o: np.ndarray, u_dot_o: np.ndarray,
+                  N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
+        """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
+        b = compute_L2_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+        return Ls_inv @ (Phi - b - N @ u_dot_o)
+
+    @staticmethod
+    def _clip_3d(x: np.ndarray, A: float) -> np.ndarray:
+        norm = float(np.linalg.norm(x))
+        if norm <= A or A == float("inf"):
+            return x.copy()
+        return (A / max(norm, A)) * x
+
+    def _clip_camera_acceleration(self, u_dot_c: np.ndarray) -> np.ndarray:
+        clipped = np.zeros_like(u_dot_c)
+        clipped[:3] = self._clip_3d(u_dot_c[:3], float(self._sopd_A[0]))
+        clipped[3:] = self._clip_3d(u_dot_c[3:], float(self._sopd_A[3]))
+        return clipped
+
+    def _is_camera_accel_saturated(self, u_dot_c: np.ndarray) -> bool:
+        return (
+            np.linalg.norm(u_dot_c[:3]) > float(self._sopd_A[0])
+            or np.linalg.norm(u_dot_c[3:]) > float(self._sopd_A[3])
+        )
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
         try:
@@ -348,51 +326,77 @@ class PBVSController:
         if s_ddot_star is None:
             s_ddot_star = np.zeros(6)
 
-        s_raw, s_star_base, _, q_oc, c_p_oc, Ls, Ls_inv, T_err = self._compute_feature_error(
+        s, s_star_base, _, q_oc, c_p_oc, Ls, Ls_inv, T_err = self._compute_feature_error(
             T_current, R_base_cam, s_star_override=s_star_ref
         )
-        s, s_dot_hat = self._filter_feature(s_raw)
         s_star_cmd = s_star_base
         s_dot_star_cmd = s_dot_star
         s_ddot_star_cmd = s_ddot_star
-        e = s - s_star_cmd
-        print(f"s:\n{s}")
+        e = s_star_cmd - s
         u_c = self._current_u_c()
-        s_dot_model = Ls @ u_c
-        if self.cfg.enable_feature_kalman and self.cfg.feature_kalman_use_velocity:
-            edot = s_dot_hat - s_dot_star_cmd
-        else:
-            edot = self._compute_edot(Ls, u_c, s_dot_star_cmd)
-
+        s_dot_for_control = Ls @ u_c
+        s_dot_for_u_o = self._compute_s_dot_by_difference(s)
+        edot = s_dot_star_cmd - s_dot_for_control
+        N = compute_N2s(q_oc, R_base_cam)
+        try:
+            N_inv = np.linalg.inv(N)
+        except np.linalg.LinAlgError:
+            N_inv = np.linalg.pinv(N)
+        # Eq. (42g): uo = N^{-1}(s_dot - L uc).
+        # u_o = self._filter_u_o(N_inv @ (s_dot_for_u_o - s_dot_for_control))
+        u_o = N_inv @ (s_dot_for_u_o - s_dot_for_control)
+        u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         mode = self.cfg.controller_mode.upper()
+        proxy_H_cmd = np.full(6, float("nan"))
         if mode == "SOPD":
-            a_star_raw = -self.cfg.kp * e - self.cfg.kd * edot + s_ddot_star_cmd
+            # Baseline: alpha_c = s_ddot* + Kp(s* - s) + Kd(s_dot* - s_dot).
+            # This mode intentionally has no feature-acceleration saturation.
+            Phi_fb_raw = self.cfg.kp * e + self.cfg.kd * edot
+            a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
-            Phi = np.clip(a_star_raw, -self._sopd_A, self._sopd_A)
+            Phi = Phi_fb_raw + s_ddot_star_cmd
             self._sopd_Phi = Phi.copy()
-            self._last_accel_saturated = bool(np.any(np.abs(a_star_raw) > self._sopd_A))
+            self._last_accel_saturated = False
+
+        elif mode == "SOPD_SAT":
+            # Eq. (28)-style naive baseline: clip camera acceleration u_dot_c.
+            Phi_fb_raw = self.cfg.kp * e + self.cfg.kd * edot
+            a_star_raw = Phi_fb_raw.copy()
+            self._sopd_a_star = a_star_raw.copy()
+            Phi = Phi_fb_raw + s_ddot_star_cmd
+            self._sopd_Phi = Phi.copy()
+            u_dot_c_raw = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv,
+                                                u_c, u_o, u_dot_o, N, R_base_cam)
+            u_dot_c = self._clip_camera_acceleration(u_dot_c_raw)
+            self._last_accel_saturated = self._is_camera_accel_saturated(u_dot_c_raw)
 
         else:
             proxy_H_cmd = self._update_adaptive_proxy_H(e)
-            Phi_fb = self._psmc.compute(
-                p=s, pd=s_star_cmd, p_dot=edot, pd_dot=np.zeros(6)
+            # Eq. (42h): b = b(s, qc, uc, uo).
+            b = compute_L2_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+            # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
+            u_dot_c = self._psmc.compute(
+                s=s,
+                s_dot=s_dot_for_u_o,
+                s_d=s_star_cmd,
+                s_dot_d=s_dot_star_cmd,
+                L=Ls,
+                L_inv=Ls_inv,
+                b=b,
+                N=N,
+                u_dot_o=u_dot_o,
             )
-            a_star_raw = self._psmc.a_star_k.copy()
-            Phi = Phi_fb + s_ddot_star_cmd
+            a_star_raw = self._psmc.u_dot_c_star.copy()
+            Phi = self._psmc.alpha_c.copy()
             self._last_accel_saturated = self._psmc.is_accel_saturated
         if mode == "SOPD":
-            proxy_H_cmd = self.cfg.proxy_H.copy()
+            u_dot_c = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv,
+                                            u_c, u_o, u_dot_o, N, R_base_cam)
 
-        u_dot_c = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv, u_c, R_base_cam)
+        # Eq. (42o): uc = uc,prv + T u_dot_c.
+        self._u_c_integrated += u_dot_c * self.dt
 
-        if self.cfg.enable_velocity_leak:
-            lam = max(0.0, float(self.cfg.velocity_leak_lambda))
-            decay = math.exp(-lam * self.dt)
-            self._u_c_integrated = decay * self._u_c_integrated + u_dot_c * self.dt
-        else:
-            self._u_c_integrated += u_dot_c * self.dt
-        # print(f"Integrated velocity:\n{self._u_c_integrated}")
-        return self._u_c_integrated, u_dot_c, s, s_star_cmd, e, edot, s_dot_model, a_star_raw, Phi, proxy_H_cmd
+        return self._u_c_integrated, u_dot_c, s, s_star_cmd, e, edot, s_dot_for_control, a_star_raw, Phi, proxy_H_cmd
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
@@ -425,7 +429,7 @@ class PBVSController:
         if T_cur is None:
             self._last_u_c = np.zeros(6)
             self._last_u_dot_c = np.zeros(6)
-            self._feature_kf.reset()
+            self._last_s_for_diff = None
             self._write_lost_frame_row(tcp_pose)
             return None, None, False, None, None, None
 
@@ -441,7 +445,7 @@ class PBVSController:
         R_base_tcp = R.from_rotvec(actual_pose[3:]).as_matrix()
         R_base_cam = R_base_tcp @ self.R_etc
 
-        u_c, u_dot_c, s, s_star, e, edot, s_dot_model, a_star, Phi, proxy_H_cmd = self._compute_control(
+        u_c, u_dot_c, s, s_star, e, edot, s_dot, a_star, Phi, proxy_H_cmd = self._compute_control(
             T_cur,
             R_base_cam,
             s_dot_star=s_dot_star,
@@ -469,17 +473,6 @@ class PBVSController:
             self._proxy_T_cam = self._proxy_feature_to_T_cam(self._psmc.proxy_position)
 
         v_ctrl = self._u_c_to_tcp_twist_base(u_c, actual_pose)
-        # print(f"v_ctrl:\n{v_ctrl}")
-
-        # scale = 1.0
-        # vn = np.linalg.norm(v_ctrl[:3])
-        # wn = np.linalg.norm(v_ctrl[3:])
-        # if vn > self.cfg.max_linear_vel:
-        #     scale = min(scale, self.cfg.max_linear_vel / vn)
-        # if wn > self.cfg.max_angular_vel:
-        #     scale = min(scale, self.cfg.max_angular_vel / wn)
-        # v_ctrl *= scale
-
         converged_now = (err_pos < self.cfg.pos_threshold
                          and err_rot < self.cfg.rot_threshold)
         if converged_now:
@@ -496,7 +489,7 @@ class PBVSController:
             Phi_log = Phi.copy()
             astar_log = a_star.copy()
             proxy_s_log = self._psmc.proxy_position
-            proxy_b_log = self._psmc.b_km1.copy()
+            proxy_b_log = self._psmc.proxy_offset
             sat_a = self._last_accel_saturated
         elif log_needed:
             Phi_log = self._sopd_Phi.copy()
@@ -524,6 +517,8 @@ class PBVSController:
                 "rx": float(r_euler[0]), "ry": float(r_euler[1]), "rz": float(r_euler[2]),
                 "Phi0": float(Phi_log[0]), "Phi1": float(Phi_log[1]), "Phi2": float(Phi_log[2]),
                 "Phi3": float(Phi_log[3]), "Phi4": float(Phi_log[4]), "Phi5": float(Phi_log[5]),
+                "udotc0": float(u_dot_c[0]), "udotc1": float(u_dot_c[1]), "udotc2": float(u_dot_c[2]),
+                "udotc3": float(u_dot_c[3]), "udotc4": float(u_dot_c[4]), "udotc5": float(u_dot_c[5]),
                 "as0": float(astar_log[0]), "as1": float(astar_log[1]), "as2": float(astar_log[2]),
                 "as3": float(astar_log[3]), "as4": float(astar_log[4]), "as5": float(astar_log[5]),
                 "proxy_s0": float(proxy_s_log[0]), "proxy_s1": float(proxy_s_log[1]), "proxy_s2": float(proxy_s_log[2]),
@@ -555,14 +550,6 @@ class PBVSController:
             "rz_deg": float(r_euler[2]),
             "s0": float(s[0]), "s1": float(s[1]), "s2": float(s[2]),
             "s3": float(s[3]), "s4": float(s[4]), "s5": float(s[5]),
-            "sraw0": float(self._last_s_raw[0]), "sraw1": float(self._last_s_raw[1]),
-            "sraw2": float(self._last_s_raw[2]), "sraw3": float(self._last_s_raw[3]),
-            "sraw4": float(self._last_s_raw[4]), "sraw5": float(self._last_s_raw[5]),
-            "sdothat0": float(self._last_s_dot_hat[0]), "sdothat1": float(self._last_s_dot_hat[1]),
-            "sdothat2": float(self._last_s_dot_hat[2]), "sdothat3": float(self._last_s_dot_hat[3]),
-            "sdothat4": float(self._last_s_dot_hat[4]), "sdothat5": float(self._last_s_dot_hat[5]),
-            "kf_enabled": int(self.cfg.enable_feature_kalman),
-            "kf_res_norm": float(np.linalg.norm(self._last_kf_residual)),
             "sstar0": float(s_star[0]), "sstar1": float(s_star[1]),
             "sstar2": float(s_star[2]), "sstar3": float(s_star[3]),
             "sstar4": float(s_star[4]), "sstar5": float(s_star[5]),
@@ -619,8 +606,7 @@ class PBVSController:
             "cx2": float(corners[2,0]), "cy2": float(corners[2,1]),
             "cx3": float(corners[3,0]), "cy3": float(corners[3,1]),
             "stable_count": self.stable_cnt, "converged": int(converged),
-            "mode": mode, "im_type": self.cfg.interaction_matrix,
-            "edot_method": self.cfg.edot_method,
+            "mode": mode,
         })
         self._frame_idx += 1
 
@@ -637,8 +623,6 @@ class PBVSController:
             "frame_idx": self._frame_idx,
             "target": self.cur_target.name if self.cur_target else "",
             "mode": self.cfg.controller_mode.upper(),
-            "im_type": self.cfg.interaction_matrix,
-            "edot_method": self.cfg.edot_method,
             "converged": 0,
             "stable_count": self.stable_cnt,
         })
@@ -656,7 +640,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 12.0):
+    def run(self, pipeline, init_pose, move_acc: float = 8.0):
         if not self.targets:
             print("❌ 未设置目标")
             return
@@ -666,28 +650,16 @@ class PBVSController:
         self._switch_target(0)
 
         mode = self.cfg.controller_mode.upper()
-        im_type = self.cfg.interaction_matrix
-        edot_m = self.cfg.edot_method
         is_psmc = "PSMC" in mode
 
         print("\n" + "="*60)
-        print(f"🎮 SO-PBVS | {mode} | {im_type} | {edot_m}")
+        print(f"🎮 SO-PBVS | {mode}")
         print(f"   Kp={vec6_to_str(self.cfg.kp, 3)}")
         print(f"   Kd={vec6_to_str(self.cfg.kd, 3)}")
         print(f"   A ={vec6_to_str(self.cfg.accel_limit, 3)}")
         print(f"   Detect stride: {self.cfg.detect_stride} | "
               f"Visualization: {'ON' if self.cfg.enable_visualization else 'OFF'}"
               f" stride={self.cfg.visualization_stride}")
-        if self.cfg.enable_velocity_leak:
-            print(f"   Velocity leak: ON | lambda={self.cfg.velocity_leak_lambda:.3g}")
-        else:
-            print("   Velocity leak: OFF")
-        if self.cfg.enable_feature_kalman:
-            print(f"   Feature Kalman: ON | meas_std={vec6_to_str(self.cfg.feature_kalman_meas_std, 3)} "
-                  f"process_std={vec6_to_str(self.cfg.feature_kalman_process_std, 3)} "
-                  f"use_velocity={self.cfg.feature_kalman_use_velocity}")
-        else:
-            print("   Feature Kalman: OFF")
         if is_psmc:
             print(f"   H ={vec6_to_str(self.cfg.proxy_H, 3)} s")
         print("   按 'N' 切换目标 | 'Q' 退出")
@@ -728,7 +700,7 @@ class PBVSController:
                         status = "CONVERGED" if converged else "Running"
                         ep, er = errs
                         sat_s = "SAT" if self._last_accel_saturated else "---"
-                        print(f"\r[{im_type}|{edot_m}] "
+                        print(f"\r[{mode}] "
                               f"{self.cur_target.name} | "
                               f"P:{ep*1000:.1f}mm R:{np.rad2deg(er):.1f}°"
                               f" | [{sat_s}] {status}   ", end="")
@@ -767,8 +739,6 @@ class PBVSController:
         vis = img.copy()
         K = self.estimator.K
         mode = self.cfg.controller_mode.upper()
-        im_type = self.cfg.interaction_matrix
-        edot_m = self.cfg.edot_method
         is_psmc = "PSMC" in mode
         h_img, w_img = vis.shape[:2]
 
@@ -838,7 +808,7 @@ class PBVSController:
             if dist > 3.0:
                 cv2.arrowedLine(vis, tuple(proxy_center_px), tuple(cur_c),
                                 (0, 255, 128), 2, tipLength=0.25)
-                proxy_bn = np.linalg.norm(self._psmc.b_km1)
+                proxy_bn = np.linalg.norm(self._psmc.proxy_offset)
                 mid = ((proxy_center_px + cur_c) // 2).tolist()
                 cv2.putText(vis, f"|proxy_b|={proxy_bn:.3f}", (mid[0]+5, mid[1]),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 128), 1, cv2.LINE_AA)
@@ -850,7 +820,7 @@ class PBVSController:
             cv2.putText(vis, f"Vel:{np.linalg.norm(v_cmd[:3])*1000:.1f}mm/s",
                         (10, h_img-20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
 
-        cv2.putText(vis, f"[{mode}|{im_type}|{edot_m}] {self.cur_target.name if self.cur_target else ''}",
+        cv2.putText(vis, f"[{mode}] {self.cur_target.name if self.cur_target else ''}",
                     (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
         hud_y = 45
         if is_psmc:
@@ -860,7 +830,7 @@ class PBVSController:
                         (0, 0, 255) if sat else (0, 200, 80), 1, cv2.LINE_AA)
             cv2.putText(vis,
                         f"|s_p|={np.linalg.norm(self._psmc.proxy_position):.4f}  "
-                        f"|proxy_b|={np.linalg.norm(self._psmc.b_km1):.4f}",
+                        f"|proxy_b|={np.linalg.norm(self._psmc.proxy_offset):.4f}",
                         (10, hud_y+18), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 0), 1, cv2.LINE_AA)
         else:
             sat = self._last_accel_saturated

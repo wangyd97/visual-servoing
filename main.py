@@ -24,7 +24,7 @@ STATUS_PRINT_INTERVAL = 30
 APRILTAG_NTHREADS = 2
 APRILTAG_QUAD_DECIMATE = 2.0
 
-ROBOT_IP = "10.31.17.22"
+ROBOT_IP = "10.31.17.25"
 
 
 def hand_eye_matrix() -> np.ndarray:
@@ -41,42 +41,45 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[16.0] * 6,
-            kd=[8.0] * 6,
+            kp=[25.0] * 6,
+            kd=[10.0] * 6,
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
-            enable_velocity_leak=False,
         ),
         "R2": dict(
             controller_mode="SOPD",
-            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+            kp=[40.0, 40.0, 40.0, 40.0, 40.0, 40.0],
             kd=[15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
-            enable_velocity_leak=False,
         ),
 
         "R3": dict(
             controller_mode="SOPD",
             kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
-            kd=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
+            kd=[15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
-            enable_velocity_leak=False,
         ),
-        "P": dict(
-            controller_mode="SOPDPSMC",
-            kp=[200.0] * 6,
-            kd=[10.0] * 6,
-            proxy_H=[0.30, 0.30, 0.30, 0.33, 0.33, 0.33],
-            enable_adaptive_proxy_H=True,
-            adaptive_proxy_H_min=[0.30, 0.30, 0.30, 0.33, 0.33, 0.33],
-            adaptive_proxy_H_max=[0.55, 0.55, 0.55, 0.60, 0.60, 0.60],
+        "RS": dict(
+            controller_mode="SOPD_SAT",
+            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+            kd=[15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
             accel_limit_pos=[5.0, 5.0, 5.0],
             accel_limit_rot=[10.0, 10.0, 10.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
-            enable_velocity_leak=False,
+        ),
+        "P": dict(
+            controller_mode="SOPDPSMC",
+            kp=[100.0] * 6,
+            kd=[10.0] * 6,
+            proxy_H=[0.80, 0.80, 0.80, 0.83, 0.83, 0.83],
+            enable_adaptive_proxy_H=False,
+            accel_limit_pos=[5.0, 5.0, 5.0],
+            accel_limit_rot=[25.0, 25.0, 25.0],
+            max_linear_vel=float("inf"),
+            max_angular_vel=float("inf"),
         ),
     }
     if method not in presets:
@@ -86,6 +89,8 @@ def method_params(method: str) -> dict:
 
 def output_stem(method: str) -> str:
     method = method.upper()
+    if method == "RS":
+        return "SOPD_SAT"
     return "SOPDPSMC" if method == "P" else f"SOPD_{method}"
 
 
@@ -98,22 +103,15 @@ def build_config(method: str, runtime: float) -> PBVSConfig:
 
     return PBVSConfig(
         tag_size=0.08,
-        detect_stride=2,
+        detect_stride=1,
         apriltag_nthreads=APRILTAG_NTHREADS,
         apriltag_quad_decimate=APRILTAG_QUAD_DECIMATE,
         enable_visualization=ENABLE_VISUALIZATION,
         visualization_stride=1,
-        interaction_matrix="L2",
-        edot_method="edot2",
         pos_threshold=0.002,
         rot_threshold=0.01,
         slow_after_convergence=False,
         max_runtime=runtime,
-        velocity_leak_lambda=1.5,
-        enable_feature_kalman=False,
-        feature_kalman_meas_std=[0.0025, 0.0025, 0.0025, 0.008, 0.008, 0.008],
-        feature_kalman_process_std=[0.6, 0.6, 0.6, 1.5, 1.5, 1.5],
-        feature_kalman_use_velocity=False,
         plot_save_path=str(figure_dir / f"{file_stem}.png"),
         trajectory_plot_save_path=str(figure_dir / f"{file_stem}_trajectory.png"),
         csv_save_path=str(csv_dir / f"{file_stem}.csv"),
@@ -150,7 +148,7 @@ def main():
     )
     parser.add_argument(
         "--method",
-        choices=["R1", "R2", "R3", "P"],
+        choices=["R1", "R2", "R3", "RS", "P"],
         default="R3",
         help="Controller preset to run.",
     )

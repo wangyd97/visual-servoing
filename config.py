@@ -50,10 +50,6 @@ class PBVSConfig:
     enable_visualization: bool = True
     visualization_stride: int = 1
 
-    interaction_matrix: str = "L2"
-
-    edot_method: str = "edot2"
-
     pos_threshold: float = 0.005
     rot_threshold: float = 0.02
     stable_frames: int = 10
@@ -65,14 +61,6 @@ class PBVSConfig:
 
     max_linear_vel: float = 0.80
     max_angular_vel: float = 0.80
-
-    enable_velocity_leak: bool = True
-    velocity_leak_lambda: float = 2.0
-
-    enable_feature_kalman: bool = False
-    feature_kalman_meas_std: object = (0.0015, 0.0015, 0.0025, 0.008, 0.008, 0.008)
-    feature_kalman_process_std: object = (1.0, 1.0, 1.0, 4.0, 4.0, 4.0)
-    feature_kalman_use_velocity: bool = False
 
     controller_mode: str = "SOPDPSMC"
 
@@ -117,17 +105,6 @@ class PBVSConfig:
 
         self.kp = to_vec6(self.kp, "kp")
         self.kd = to_vec6(self.kd, "kd")
-
-        self.enable_feature_kalman = bool(self.enable_feature_kalman)
-        self.feature_kalman_meas_std = np.maximum(
-            to_vec6(self.feature_kalman_meas_std, "feature_kalman_meas_std"),
-            1e-9
-        )
-        self.feature_kalman_process_std = np.maximum(
-            to_vec6(self.feature_kalman_process_std, "feature_kalman_process_std"),
-            1e-9
-        )
-        self.feature_kalman_use_velocity = bool(self.feature_kalman_use_velocity)
 
         if self.accel_limit is None:
             default_accel = float("inf") if self.controller_mode.upper() == "SOPD" else 1.5
@@ -182,9 +159,6 @@ CSV_COLUMNS = [
     "err_pos_mm", "ex_mm", "ey_mm", "ez_mm",
     "err_rot_deg", "rx_deg", "ry_deg", "rz_deg",
     "s0", "s1", "s2", "s3", "s4", "s5",
-    "sraw0", "sraw1", "sraw2", "sraw3", "sraw4", "sraw5",
-    "sdothat0", "sdothat1", "sdothat2", "sdothat3", "sdothat4", "sdothat5",
-    "kf_enabled", "kf_res_norm",
     "sstar0", "sstar1", "sstar2", "sstar3", "sstar4", "sstar5",
     "sdotstar0", "sdotstar1", "sdotstar2", "sdotstar3", "sdotstar4", "sdotstar5",
     "sddotstar0", "sddotstar1", "sddotstar2", "sddotstar3", "sddotstar4", "sddotstar5",
@@ -201,5 +175,5 @@ CSV_COLUMNS = [
     "udotc0", "udotc1", "udotc2", "udotc3", "udotc4", "udotc5",
     "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
     "cx0", "cy0", "cx1", "cy1", "cx2", "cy2", "cx3", "cy3",
-    "stable_count", "converged", "mode", "im_type", "edot_method",
+    "stable_count", "converged", "mode",
 ]

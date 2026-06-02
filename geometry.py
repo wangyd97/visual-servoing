@@ -30,13 +30,13 @@ def get_tag_3d_corners(tag_size: float, T_tag: np.ndarray) -> np.ndarray:
 
 
 def B1_mat(q: np.ndarray) -> np.ndarray:
-    """B1(q)，q=[qx,qy,qz,qw]，对应 qv_dot = B1(q) * c_omega_cb。"""
+    """Rotational block in Eq. (20): -c_Q_oc / 2, q=[qx,qy,qz,qw]."""
     q0, qv = q[3], q[:3]
     return 0.5 * (-q0 * np.eye(3) + skew(qv))
 
 
 def compute_L2_hat(c_t_o: np.ndarray, q_oc: np.ndarray) -> np.ndarray:
-    """PDF eq.(9) 的 Lhat(s)，输入 twist 为 camera-frame [c_v_cb, c_omega_cb]。"""
+    """Camera-frame interaction matrix block from Eq. (20)."""
     return np.block([
         [-np.eye(3),         skew(c_t_o)    ],
         [np.zeros((3, 3)),   B1_mat(q_oc)   ]
@@ -45,7 +45,7 @@ def compute_L2_hat(c_t_o: np.ndarray, q_oc: np.ndarray) -> np.ndarray:
 
 def compute_L2s(c_t_o: np.ndarray, q_oc: np.ndarray,
                 R_base_cam: np.ndarray) -> np.ndarray:
-    """PDF eq.(8): L(s,qc)=Lhat(s) diag(Rc.T, Rc.T)，输入 twist 为 base-frame uc。"""
+    """Eq. (20): L(s,qc)=Lhat(s) diag(Rc.T, Rc.T), input is base-frame uc."""
     Rt = R_base_cam.T
     return compute_L2_hat(c_t_o, q_oc) @ np.block([
         [Rt, np.zeros((3, 3))],
@@ -53,16 +53,32 @@ def compute_L2s(c_t_o: np.ndarray, q_oc: np.ndarray,
     ])
 
 
+def compute_N2s(q_oc: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
+    """Eq. (21): N(s,qc), input is base-frame object twist uo."""
+    Rt = R_base_cam.T
+    return np.block([
+        [Rt, np.zeros((3, 3))],
+        [np.zeros((3, 3)), -B1_mat(q_oc)],
+    ])
+
+
 def compute_L2_b(c_t_o: np.ndarray, q_oc: np.ndarray,
-                 u_c: np.ndarray,
+                 u_c: np.ndarray, u_o: np.ndarray,
                  R_base_cam: np.ndarray) -> np.ndarray:
-    """PDF eq.(11) 的 b(s,qc,uc)，输入 uc=[v_c,omega_c] 均在 base frame 表示。"""
-    v_base = u_c[:3]
-    omega_base = u_c[3:]
-    omega_cam = R_base_cam.T @ omega_base
+    """Eq. (23): b(s,qc,uc,uo), with uc and uo expressed in base frame."""
+    v_c_base = u_c[:3]
+    omega_c_base = u_c[3:]
+    v_o_base = u_o[:3]
+    omega_o_base = u_o[3:]
+    omega_c_cam = R_base_cam.T @ omega_c_base
+    omega_rel_base = omega_o_base - omega_c_base
+    N = compute_N2s(q_oc, R_base_cam)
     b_trans = (
-        2.0 * R_base_cam.T @ np.cross(omega_base, v_base)
-        + skew(omega_cam) @ skew(omega_cam) @ c_t_o
+        N[:3, :3] @ (2.0 * np.cross(v_o_base - v_c_base, omega_c_base))
+        + skew(omega_c_cam) @ skew(omega_c_cam) @ c_t_o
     )
-    b_rot = -0.25 * float(omega_base @ omega_base) * q_oc[:3]
+    b_rot = (
+        N[3:, 3:] @ np.cross(omega_o_base, omega_c_base)
+        - 0.25 * float(omega_rel_base @ omega_rel_base) * q_oc[:3]
+    )
     return np.concatenate([b_trans, b_rot])
