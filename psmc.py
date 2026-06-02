@@ -74,9 +74,8 @@ class PSMCPDProxy:
 
         # Eq. (42l): u_dot_c = Pi_A(u_dot_c*).
         # Translational and rotational 3D vectors are norm-clipped separately:
-        # clip(x) = A x / max(||x||, A), not element-wise clipping.
+        # clip(x) = A x / max(||x||, A)
         self.u_dot_c = self._clip_camera_acceleration(self.u_dot_c_star)
-
         # Eq. (42m): alpha_c = alpha_c* + L(u_dot_c - u_dot_c*).
         self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
 

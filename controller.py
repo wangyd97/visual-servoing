@@ -79,6 +79,8 @@ class PBVSController:
         self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
         self._last_u_dot_c = np.zeros(6)
+        self._u_c_measured_filtered = np.zeros(6)
+        self._has_u_c_measured_filtered = False
         self._last_s_for_diff: Optional[np.ndarray] = None
         self._last_s_diff_time: Optional[float] = None
         self._s_dot_diff_filtered = np.zeros(6)
@@ -141,6 +143,8 @@ class PBVSController:
         self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
         self._last_u_dot_c = np.zeros(6)
+        self._u_c_measured_filtered = np.zeros(6)
+        self._has_u_c_measured_filtered = False
         self._last_s_for_diff = None
         self._last_s_diff_time = None
         self._s_dot_diff_filtered = np.zeros(6)
@@ -206,24 +210,33 @@ class PBVSController:
     def _current_u_c(self) -> np.ndarray:
         return self._last_u_c.copy()
 
+    def _filter_u_c_measured(self, u_c_measured: np.ndarray) -> np.ndarray:
+        u_c_measured = np.asarray(u_c_measured, dtype=float).reshape(6)
+        if not self._has_u_c_measured_filtered:
+            self._u_c_measured_filtered = u_c_measured.copy()
+            self._has_u_c_measured_filtered = True
+        else:
+            tau = 0.10
+            beta = tau / (tau + self.dt)
+            self._u_c_measured_filtered = (
+                beta * self._u_c_measured_filtered
+                + (1.0 - beta) * u_c_measured
+            )
+        return self._u_c_measured_filtered.copy()
+
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
-        """Eq. (42a): obtain s_dot from a filtered visual-feature difference."""
+        """Eq. (42a): obtain s_dot from a visual-feature difference."""
         s = np.asarray(s, dtype=float).reshape(6)
         now = time.perf_counter()
         if self._last_s_for_diff is None or self._last_s_diff_time is None:
-            self._s_dot_diff_filtered = np.zeros(6)
+            s_dot = np.zeros(6)
         else:
             dt = max(now - self._last_s_diff_time, 1e-4)
-            s_dot_raw = (s - self._last_s_for_diff) / dt
-            tau = 0.08
-            beta = tau / (tau + dt)
-            self._s_dot_diff_filtered = (
-                beta * self._s_dot_diff_filtered
-                + (1.0 - beta) * s_dot_raw
-            )
+            s_dot = (s - self._last_s_for_diff) / dt
         self._last_s_for_diff = s.copy()
         self._last_s_diff_time = now
-        return self._s_dot_diff_filtered.copy()
+        self._s_dot_diff_filtered = s_dot.copy()
+        return s_dot
 
     def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
         u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
@@ -255,20 +268,6 @@ class PBVSController:
         self._last_u_o_for_diff = u_o.copy()
         self._last_u_o_diff_time = now
         return self._u_dot_o_filtered.copy()
-
-    def _update_adaptive_proxy_H(self, e: np.ndarray) -> np.ndarray:
-        if not self.cfg.enable_adaptive_proxy_H:
-            self._psmc.H = self.cfg.proxy_H.copy()
-            return self._psmc.H.copy()
-
-        h_from_speed = np.abs(e) / self.cfg.adaptive_proxy_feature_vel_limit
-        h_cmd = np.clip(
-            h_from_speed,
-            self.cfg.adaptive_proxy_H_min,
-            self.cfg.adaptive_proxy_H_max,
-        )
-        self._psmc.H = h_cmd.copy()
-        return h_cmd
 
     def _compute_u_dot_c(self, Phi: np.ndarray, q_oc: np.ndarray,
                   c_p_oc: np.ndarray, Ls: np.ndarray,
@@ -318,6 +317,7 @@ class PBVSController:
 
     def _compute_control(self, T_current: np.ndarray,
                          R_base_cam: np.ndarray,
+                         u_c_measured: np.ndarray = None,
                          s_dot_star: np.ndarray = None,
                          s_ddot_star: np.ndarray = None,
                          s_star_ref: np.ndarray = None):
@@ -333,10 +333,20 @@ class PBVSController:
         s_dot_star_cmd = s_dot_star
         s_ddot_star_cmd = s_ddot_star
         e = s_star_cmd - s
-        u_c = self._current_u_c()
-        s_dot_for_control = Ls @ u_c
-        s_dot_for_u_o = self._compute_s_dot_by_difference(s)
-        edot = s_dot_star_cmd - s_dot_for_control
+        u_c_cmd = self._current_u_c()
+        if u_c_measured is None:
+            u_c = u_c_cmd
+        else:
+            # Use the measured camera twist only as a low-pass correction.
+            # This keeps Eq. (42b)'s robot feedback while avoiding raw RTDE noise.
+            u_c_measured_filtered = self._filter_u_c_measured(u_c_measured)
+            measured_weight = 0.0
+            u_c = ((1.0 - measured_weight) * u_c_cmd
+                   + measured_weight * u_c_measured_filtered)
+        # print(f"u_c : {vec6_to_str(u_c)}")
+        s_dot_by_interaction_matrix = Ls @ u_c
+        s_dot_by_difference = self._compute_s_dot_by_difference(s)
+        edot = s_dot_star_cmd - s_dot_by_interaction_matrix
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         N = compute_N2s(q_oc, R_base_cam)
@@ -345,10 +355,11 @@ class PBVSController:
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
-        u_o = self._filter_u_o(N_inv @ (s_dot_for_u_o - s_dot_for_control))
-        # u_o = N_inv @ (s_dot_for_u_o - s_dot_for_control)
+        u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix))
+        # u_o = N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix)
         print(f"u_o : {vec6_to_str(u_o)}")
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
+        # print(f"u_dot_o : {vec6_to_str(u_dot_o)}")
         mode = self.cfg.controller_mode.upper()
         proxy_H_cmd = np.full(6, float("nan"))
         if mode == "SOPD":
@@ -373,13 +384,14 @@ class PBVSController:
             self._last_accel_saturated = self._is_camera_accel_saturated(u_dot_c_raw)
 
         else:
-            proxy_H_cmd = self._update_adaptive_proxy_H(e)
+            self._psmc.H = self.cfg.proxy_H.copy()
+            proxy_H_cmd = self.cfg.proxy_H.copy()
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_L2_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,
-                s_dot=s_dot_for_control,
+                s_dot=s_dot_by_interaction_matrix,
                 s_d=s_star_cmd,
                 s_dot_d=s_dot_star_cmd,
                 L=Ls,
@@ -398,7 +410,7 @@ class PBVSController:
         # Eq. (42o): uc = uc,prv + T u_dot_c.
         self._u_c_integrated += u_dot_c * self.dt
 
-        return self._u_c_integrated, u_dot_c, s, s_star_cmd, e, edot, s_dot_for_control, a_star_raw, Phi, proxy_H_cmd
+        return self._u_c_integrated, u_dot_c, s, s_star_cmd, e, edot, s_dot_by_interaction_matrix, a_star_raw, Phi, proxy_H_cmd
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
@@ -410,6 +422,16 @@ class PBVSController:
         v_tcp_base = v_c_base - np.cross(omega_base, p_base_ec)
 
         return np.concatenate([v_tcp_base, omega_base])
+
+    def _tcp_twist_base_to_u_c(self, tcp_twist: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
+        R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
+        p_base_ec = R_base_tcp @ self.p_etc
+
+        v_tcp_base = tcp_twist[:3]
+        omega_base = tcp_twist[3:]
+        v_c_base = v_tcp_base + np.cross(omega_base, p_base_ec)
+
+        return np.concatenate([v_c_base, omega_base])
 
     def _detect_or_reuse_tag(self, gray_img):
         should_detect = (
@@ -425,7 +447,8 @@ class PBVSController:
             return detection
         return self._last_detection
 
-    def process_step(self, gray_img, tcp_pose: np.ndarray = None):
+    def process_step(self, gray_img, tcp_pose: np.ndarray = None,
+                     tcp_speed: np.ndarray = None):
         T_cur, corners, R_cur, t_cur = self._detect_or_reuse_tag(gray_img)
         
         if T_cur is None:
@@ -444,12 +467,23 @@ class PBVSController:
             actual_pose = np.array(self.rtde_r.getActualTCPPose())
         else:
             actual_pose = np.asarray(tcp_pose, dtype=float)
+        if tcp_speed is None:
+            try:
+                actual_speed = np.array(self.rtde_r.getActualTCPSpeed())
+            except Exception:
+                actual_speed = None
+        else:
+            actual_speed = np.asarray(tcp_speed, dtype=float)
+        u_c_measured = None
+        if actual_speed is not None:
+            u_c_measured = self._tcp_twist_base_to_u_c(actual_speed, actual_pose)
         R_base_tcp = R.from_rotvec(actual_pose[3:]).as_matrix()
         R_base_cam = R_base_tcp @ self.R_etc
 
         u_c, u_dot_c, s, s_star, e, edot, s_dot, a_star, Phi, proxy_H_cmd = self._compute_control(
             T_cur,
             R_base_cam,
+            u_c_measured=u_c_measured,
             s_dot_star=s_dot_star,
             s_ddot_star=s_ddot_star,
             s_star_ref=s_star_ref,
@@ -689,11 +723,13 @@ class PBVSController:
 
                 try:
                     tcp_pose_now = np.array(self.rtde_r.getActualTCPPose())
+                    tcp_speed_now = np.array(self.rtde_r.getActualTCPSpeed())
                 except Exception:
                     tcp_pose_now = None
+                    tcp_speed_now = None
 
                 v_cmd, errs, converged, corners, R_cur, t_cur = self.process_step(
-                    gray, tcp_pose=tcp_pose_now
+                    gray, tcp_pose=tcp_pose_now, tcp_speed=tcp_speed_now
                 )
 
                 if v_cmd is not None:

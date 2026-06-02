@@ -75,10 +75,6 @@ class PBVSConfig:
     proxy_H: object = None
     proxy_H_pos: float = 0.8
     proxy_H_rot: float = 0.8
-    enable_adaptive_proxy_H: bool = False
-    adaptive_proxy_H_min: object = None
-    adaptive_proxy_H_max: object = None
-    adaptive_proxy_feature_vel_limit: object = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
 
     plot_save_path: str = "pbvs_error_plot.png"
     trajectory_plot_save_path: str = ""
@@ -124,24 +120,6 @@ class PBVSConfig:
             self.proxy_H = to_vec6(self.proxy_H, "proxy_H")
             self.proxy_H_pos = float(np.mean(self.proxy_H[:3]))
             self.proxy_H_rot = float(np.mean(self.proxy_H[3:]))
-
-        self.enable_adaptive_proxy_H = bool(self.enable_adaptive_proxy_H)
-        if self.adaptive_proxy_H_min is None:
-            self.adaptive_proxy_H_min = self.proxy_H.copy()
-        else:
-            self.adaptive_proxy_H_min = to_vec6(self.adaptive_proxy_H_min, "adaptive_proxy_H_min")
-        if self.adaptive_proxy_H_max is None:
-            self.adaptive_proxy_H_max = np.maximum(2.0 * self.adaptive_proxy_H_min,
-                                                   self.adaptive_proxy_H_min + 1e-9)
-        else:
-            self.adaptive_proxy_H_max = np.maximum(
-                to_vec6(self.adaptive_proxy_H_max, "adaptive_proxy_H_max"),
-                self.adaptive_proxy_H_min + 1e-9,
-            )
-        self.adaptive_proxy_feature_vel_limit = np.maximum(
-            to_vec6(self.adaptive_proxy_feature_vel_limit, "adaptive_proxy_feature_vel_limit"),
-            1e-9,
-        )
 
 
 @dataclass
