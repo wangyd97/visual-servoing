@@ -45,19 +45,28 @@ class PSMCPDProxy:
         self._initialized = False
 
     def compute(self, s, s_dot, s_d, s_dot_d, L, L_inv, b, N, u_dot_o):
-        K, B, H, T = self.K, self.B, self.H, self.T
+        # K, B, H are stored as diagonal entries in the config, and used here
+        # as diagonal matrices to match the notation in Eq. (42).
+        K = np.diag(self.K)
+        B = np.diag(self.B)
+        H = np.diag(self.H)
+        I = np.eye(self.n)
+        T = self.T
         if not self._initialized:
             self.s_p_prv = np.asarray(s, dtype=float).reshape(self.n).copy()
             self._initialized = True
 
         # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + H s_p,prv/T).
-        self.s_p_star = (s_d + H * s_dot_d + H * self.s_p_prv / T) / (1.0 + H / T)
+        self.s_p_star = np.linalg.solve(
+            I + H / T,
+            s_d + H @ s_dot_d + H @ self.s_p_prv / T,
+        )
 
         # Eq. (42j): alpha_c* = (K + B/T)s_p* - Ks - B(s_dot + s_p,prv/T).
         self.alpha_c_star = (
-            (K + B / T) * self.s_p_star
-            - K * s
-            - B * (s_dot + self.s_p_prv / T)
+            (K + B / T) @ self.s_p_star
+            - K @ s
+            - B @ (s_dot + self.s_p_prv / T)
         )
 
         # Eq. (42k): u_dot_c* = L^-1(alpha_c* - b - N u_dot_o).
@@ -72,11 +81,9 @@ class PSMCPDProxy:
         self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
 
         # Eq. (42n): s_p = s_p* + (K + B/T)^-1(alpha_c - alpha_c*).
-        denom = K + B / T
-        self.s_p = self.s_p_star + np.where(
-            np.abs(denom) > 1e-15,
-            (self.alpha_c - self.alpha_c_star) / denom,
-            0.0,
+        self.s_p = self.s_p_star + np.linalg.solve(
+            K + B / T,
+            self.alpha_c - self.alpha_c_star,
         )
         self.s_p_prv = self.s_p.copy()
         return self.u_dot_c

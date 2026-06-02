@@ -31,7 +31,7 @@ class PBVSController:
         self.e_T_c = hand_eye_calib
         self.R_etc = self.e_T_c[0:3, 0:3]
         self.p_etc = self.e_T_c[:3, 3]
-        self.rtde_freq = 60.0
+        self.rtde_freq = 30.0
         self.dt = 1.0 / self.rtde_freq
 
         self.rtde_c = RTDEControl(robot_ip, self.rtde_freq)
@@ -337,22 +337,23 @@ class PBVSController:
         s_dot_for_control = Ls @ u_c
         s_dot_for_u_o = self._compute_s_dot_by_difference(s)
         edot = s_dot_star_cmd - s_dot_for_control
+        K = np.diag(self.cfg.kp)
+        B = np.diag(self.cfg.kd)
         N = compute_N2s(q_oc, R_base_cam)
         try:
             N_inv = np.linalg.inv(N)
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
-        # u_o = self._filter_u_o(N_inv @ (s_dot_for_u_o - s_dot_for_control))
-        u_o = N_inv @ (s_dot_for_u_o - s_dot_for_control)
+        u_o = self._filter_u_o(N_inv @ (s_dot_for_u_o - s_dot_for_control))
+        # u_o = N_inv @ (s_dot_for_u_o - s_dot_for_control)
         print(f"u_o : {vec6_to_str(u_o)}")
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         mode = self.cfg.controller_mode.upper()
         proxy_H_cmd = np.full(6, float("nan"))
         if mode == "SOPD":
-            # Baseline: alpha_c = s_ddot* + Kp(s* - s) + Kd(s_dot* - s_dot).
-            # This mode intentionally has no feature-acceleration saturation.
-            Phi_fb_raw = self.cfg.kp * e + self.cfg.kd * edot
+            # Baseline: alpha_c = Kp(s* - s) + Kd(s_dot* - s_dot).
+            Phi_fb_raw = K @ e + B @ edot
             a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
             Phi = Phi_fb_raw + s_ddot_star_cmd
@@ -361,7 +362,7 @@ class PBVSController:
 
         elif mode == "SOPD_SAT":
             # Eq. (28)-style naive baseline: clip camera acceleration u_dot_c.
-            Phi_fb_raw = self.cfg.kp * e + self.cfg.kd * edot
+            Phi_fb_raw = K @ e + B @ edot
             a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
             Phi = Phi_fb_raw + s_ddot_star_cmd
