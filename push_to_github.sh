@@ -3,7 +3,7 @@ set -e
 
 REPO_URL="https://github.com/wangyd97/visual-servoing.git"
 BRANCH="main"
-COMMIT_MSG="${1:-Update visual servoing code}"
+COMMIT_MSG="${1:-Update by Wang}"
 
 cd "$(dirname "$0")"
 
