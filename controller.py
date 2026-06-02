@@ -345,6 +345,7 @@ class PBVSController:
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
         # u_o = self._filter_u_o(N_inv @ (s_dot_for_u_o - s_dot_for_control))
         u_o = N_inv @ (s_dot_for_u_o - s_dot_for_control)
+        print(f"u_o : {vec6_to_str(u_o)}")
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         mode = self.cfg.controller_mode.upper()
         proxy_H_cmd = np.full(6, float("nan"))
@@ -377,7 +378,7 @@ class PBVSController:
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,
-                s_dot=s_dot_for_u_o,
+                s_dot=s_dot_for_control,
                 s_d=s_star_cmd,
                 s_dot_d=s_dot_star_cmd,
                 L=Ls,
