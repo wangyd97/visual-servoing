@@ -346,7 +346,7 @@ class PBVSController:
         # print(f"u_c : {vec6_to_str(u_c)}")
         s_dot_by_interaction_matrix = Ls @ u_c
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
-        edot = s_dot_star_cmd - s_dot_by_interaction_matrix
+        edot = s_dot_star_cmd - s_dot_by_difference
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         N = compute_N2s(q_oc, R_base_cam)
