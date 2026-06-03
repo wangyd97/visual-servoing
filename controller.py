@@ -327,7 +327,7 @@ class PBVSController:
         u_c = self._current_u_c()
         
         N = compute_N2s(q_oc, R_base_cam)
-        s_dot_by_interaction_matrix = Ls @ u_c + N @ self._last_u_o
+        s_dot_by_interaction_matrix = Ls @ u_c + N @ self._filter_u_o(self._last_u_o)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -341,7 +341,7 @@ class PBVSController:
         edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         # u_o = np.zeros(6)  # --- IGNORE ---
-        # u_dot_o = np.zeros(6)  # --- IGNORE ---
+        u_dot_o = np.zeros(6)  # --- IGNORE ---
         self._last_u_o = u_o.copy()
         print("u_o:", u_o)
         mode = self.cfg.controller_mode.upper()
@@ -639,7 +639,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 8.0):
+    def run(self, pipeline, init_pose, move_acc: float = 12.0):
         if not self.targets:
             print("❌ 未设置目标")
             return
