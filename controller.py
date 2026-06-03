@@ -48,9 +48,9 @@ class PBVSController:
         self.cur_target_idx = 0
 
         self._active_T_des: Optional[np.ndarray] = None
-        self._last_s_star = np.zeros(6)
-        self._last_s_dot_star = np.zeros(6)
-        self._last_s_ddot_star = np.zeros(6)
+        self._last_s_d = np.zeros(6)
+        self._last_s_dot_d = np.zeros(6)
+        self._last_s_ddot_d = np.zeros(6)
         self._last_accel_saturated = False
 
         self.stable_cnt = 0
@@ -153,9 +153,9 @@ class PBVSController:
         self._last_u_o_diff_time = None
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
-        self._last_s_star = np.zeros(6)
-        self._last_s_dot_star = np.zeros(6)
-        self._last_s_ddot_star = np.zeros(6)
+        self._last_s_d = np.zeros(6)
+        self._last_s_dot_d = np.zeros(6)
+        self._last_s_ddot_d = np.zeros(6)
         self._last_accel_saturated = False
 
     def _desired_T(self) -> np.ndarray:
@@ -176,13 +176,13 @@ class PBVSController:
         q_des = Rotation.from_matrix(T0[:3, :3]).as_quat()
         if q_des[3] < 0:
             q_des = -q_des
-        s_star = np.concatenate([T0[:3, 3], q_des[:3]])
+        s_d = np.concatenate([T0[:3, 3], q_des[:3]])
         z = np.zeros(6)
-        return T0, s_star, z.copy(), z.copy()
+        return T0, s_d, z.copy(), z.copy()
 
     def _compute_feature_error(self, T_current: np.ndarray,
                                R_base_cam: np.ndarray,
-                               s_star_override: np.ndarray = None):
+                               s_d_override: np.ndarray = None):
         T_des = self._desired_T()
         T_err = T_des @ inv_T(T_current)
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
@@ -192,20 +192,20 @@ class PBVSController:
         if np.dot(q_oc, q_des) < 0:
             q_oc = -q_oc
         c_p_oc = T_current[:3, 3]
-        s_star = np.concatenate([T_des[:3, 3], q_des[:3]])
+        s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
         Ls = compute_L2s(c_p_oc, q_oc, R_base_cam)
-        if s_star_override is not None:
-            s_star = np.asarray(s_star_override, dtype=float).reshape(6).copy()
+        if s_d_override is not None:
+            s_d = np.asarray(s_d_override, dtype=float).reshape(6).copy()
 
         s = np.concatenate([c_p_oc, q_oc[:3]])
-        e = s_star - s
+        e = s_d - s
 
         try:
             Ls_inv = np.linalg.inv(Ls)
         except np.linalg.LinAlgError:
             Ls_inv = np.linalg.pinv(Ls)
 
-        return s, s_star, e, q_oc, c_p_oc, Ls, Ls_inv, T_err
+        return s, s_d, e, q_oc, c_p_oc, Ls, Ls_inv, T_err
 
     def _current_u_c(self) -> np.ndarray:
         return self._last_u_c.copy()
@@ -225,18 +225,23 @@ class PBVSController:
         return self._u_c_measured_filtered.copy()
 
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
-        """Eq. (42a): obtain s_dot from a visual-feature difference."""
+        """Eq. (42a): obtain s_dot from a filtered visual-feature difference."""
         s = np.asarray(s, dtype=float).reshape(6)
         now = time.perf_counter()
         if self._last_s_for_diff is None or self._last_s_diff_time is None:
-            s_dot = np.zeros(6)
+            self._s_dot_diff_filtered = np.zeros(6)
         else:
             dt = max(now - self._last_s_diff_time, 1e-4)
-            s_dot = (s - self._last_s_for_diff) / dt
+            s_dot_raw = (s - self._last_s_for_diff) / dt
+            tau = 0.04
+            beta = tau / (tau + dt)
+            self._s_dot_diff_filtered = (
+                beta * self._s_dot_diff_filtered
+                + (1.0 - beta) * s_dot_raw
+            )
         self._last_s_for_diff = s.copy()
         self._last_s_diff_time = now
-        self._s_dot_diff_filtered = s_dot.copy()
-        return s_dot
+        return self._s_dot_diff_filtered.copy()
 
     def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
         u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
@@ -318,21 +323,21 @@ class PBVSController:
     def _compute_control(self, T_current: np.ndarray,
                          R_base_cam: np.ndarray,
                          u_c_measured: np.ndarray = None,
-                         s_dot_star: np.ndarray = None,
-                         s_ddot_star: np.ndarray = None,
-                         s_star_ref: np.ndarray = None):
-        if s_dot_star is None:
-            s_dot_star = np.zeros(6)
-        if s_ddot_star is None:
-            s_ddot_star = np.zeros(6)
+                         s_dot_d: np.ndarray = None,
+                         s_ddot_d: np.ndarray = None,
+                         s_d_ref: np.ndarray = None):
+        if s_dot_d is None:
+            s_dot_d = np.zeros(6)
+        if s_ddot_d is None:
+            s_ddot_d = np.zeros(6)
 
-        s, s_star_base, _, q_oc, c_p_oc, Ls, Ls_inv, T_err = self._compute_feature_error(
-            T_current, R_base_cam, s_star_override=s_star_ref
+        s, s_d_base, _, q_oc, c_p_oc, Ls, Ls_inv, T_err = self._compute_feature_error(
+            T_current, R_base_cam, s_d_override=s_d_ref
         )
-        s_star_cmd = s_star_base
-        s_dot_star_cmd = s_dot_star
-        s_ddot_star_cmd = s_ddot_star
-        e = s_star_cmd - s
+        s_d_cmd = s_d_base
+        s_dot_d_cmd = s_dot_d
+        s_ddot_d_cmd = s_ddot_d
+        e = s_d_cmd - s
         u_c_cmd = self._current_u_c()
         if u_c_measured is None:
             u_c = u_c_cmd
@@ -343,10 +348,8 @@ class PBVSController:
             measured_weight = 0.0
             u_c = ((1.0 - measured_weight) * u_c_cmd
                    + measured_weight * u_c_measured_filtered)
-        # print(f"u_c : {vec6_to_str(u_c)}")
         s_dot_by_interaction_matrix = Ls @ u_c
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
-        edot = s_dot_star_cmd - s_dot_by_difference
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         N = compute_N2s(q_oc, R_base_cam)
@@ -357,9 +360,8 @@ class PBVSController:
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix))
         # u_o = N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix)
-        print(f"u_o : {vec6_to_str(u_o)}")
+        edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        # print(f"u_dot_o : {vec6_to_str(u_dot_o)}")
         mode = self.cfg.controller_mode.upper()
         proxy_H_cmd = np.full(6, float("nan"))
         if mode == "SOPD":
@@ -367,7 +369,7 @@ class PBVSController:
             Phi_fb_raw = K @ e + B @ edot
             a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
-            Phi = Phi_fb_raw + s_ddot_star_cmd
+            Phi = Phi_fb_raw + s_ddot_d_cmd
             self._sopd_Phi = Phi.copy()
             self._last_accel_saturated = False
 
@@ -376,7 +378,7 @@ class PBVSController:
             Phi_fb_raw = K @ e + B @ edot
             a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
-            Phi = Phi_fb_raw + s_ddot_star_cmd
+            Phi = Phi_fb_raw + s_ddot_d_cmd
             self._sopd_Phi = Phi.copy()
             u_dot_c_raw = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv,
                                                 u_c, u_o, u_dot_o, N, R_base_cam)
@@ -392,8 +394,8 @@ class PBVSController:
             u_dot_c = self._psmc.compute(
                 s=s,
                 s_dot=s_dot_by_interaction_matrix,
-                s_d=s_star_cmd,
-                s_dot_d=s_dot_star_cmd,
+                s_d=s_d_cmd,
+                s_dot_d=s_dot_d_cmd,
                 L=Ls,
                 L_inv=Ls_inv,
                 b=b,
@@ -410,7 +412,7 @@ class PBVSController:
         # Eq. (42o): uc = uc,prv + T u_dot_c.
         self._u_c_integrated += u_dot_c * self.dt
 
-        return self._u_c_integrated, u_dot_c, s, s_star_cmd, e, edot, s_dot_by_interaction_matrix, a_star_raw, Phi, proxy_H_cmd
+        return self._u_c_integrated, u_dot_c, s, s_d_cmd, e, edot, s_dot_by_interaction_matrix, a_star_raw, Phi, proxy_H_cmd
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
@@ -458,10 +460,10 @@ class PBVSController:
             self._write_lost_frame_row(tcp_pose)
             return None, None, False, None, None, None
 
-        _, s_star_ref, s_dot_star, s_ddot_star = self._fixed_reference()
-        self._last_s_star = s_star_ref.copy()
-        self._last_s_dot_star = s_dot_star.copy()
-        self._last_s_ddot_star = s_ddot_star.copy()
+        _, s_d_ref, s_dot_d, s_ddot_d = self._fixed_reference()
+        self._last_s_d = s_d_ref.copy()
+        self._last_s_dot_d = s_dot_d.copy()
+        self._last_s_ddot_d = s_ddot_d.copy()
 
         if tcp_pose is None:
             actual_pose = np.array(self.rtde_r.getActualTCPPose())
@@ -480,18 +482,18 @@ class PBVSController:
         R_base_tcp = R.from_rotvec(actual_pose[3:]).as_matrix()
         R_base_cam = R_base_tcp @ self.R_etc
 
-        u_c, u_dot_c, s, s_star, e, edot, s_dot, a_star, Phi, proxy_H_cmd = self._compute_control(
+        u_c, u_dot_c, s, s_d, e, edot, s_dot, a_star, Phi, proxy_H_cmd = self._compute_control(
             T_cur,
             R_base_cam,
             u_c_measured=u_c_measured,
-            s_dot_star=s_dot_star,
-            s_ddot_star=s_ddot_star,
-            s_star_ref=s_star_ref,
+            s_dot_d=s_dot_d,
+            s_ddot_d=s_ddot_d,
+            s_d_ref=s_d_ref,
         )
 
-        self._last_s_star = s_star.copy()
-        self._last_s_dot_star = s_dot_star.copy()
-        self._last_s_ddot_star = s_ddot_star.copy()
+        self._last_s_d = s_d.copy()
+        self._last_s_dot_d = s_dot_d.copy()
+        self._last_s_ddot_d = s_ddot_d.copy()
         self._last_u_c = u_c.copy()
         self._last_u_dot_c = u_dot_c.copy()
         self._cur_u_c = u_c.copy()
@@ -586,21 +588,21 @@ class PBVSController:
             "rz_deg": float(r_euler[2]),
             "s0": float(s[0]), "s1": float(s[1]), "s2": float(s[2]),
             "s3": float(s[3]), "s4": float(s[4]), "s5": float(s[5]),
-            "sstar0": float(s_star[0]), "sstar1": float(s_star[1]),
-            "sstar2": float(s_star[2]), "sstar3": float(s_star[3]),
-            "sstar4": float(s_star[4]), "sstar5": float(s_star[5]),
-            "sdotstar0": float(s_dot_star[0]),
-            "sdotstar1": float(s_dot_star[1]),
-            "sdotstar2": float(s_dot_star[2]),
-            "sdotstar3": float(s_dot_star[3]),
-            "sdotstar4": float(s_dot_star[4]),
-            "sdotstar5": float(s_dot_star[5]),
-            "sddotstar0": float(s_ddot_star[0]),
-            "sddotstar1": float(s_ddot_star[1]),
-            "sddotstar2": float(s_ddot_star[2]),
-            "sddotstar3": float(s_ddot_star[3]),
-            "sddotstar4": float(s_ddot_star[4]),
-            "sddotstar5": float(s_ddot_star[5]),
+            "sstar0": float(s_d[0]), "sstar1": float(s_d[1]),
+            "sstar2": float(s_d[2]), "sstar3": float(s_d[3]),
+            "sstar4": float(s_d[4]), "sstar5": float(s_d[5]),
+            "sdotstar0": float(s_dot_d[0]),
+            "sdotstar1": float(s_dot_d[1]),
+            "sdotstar2": float(s_dot_d[2]),
+            "sdotstar3": float(s_dot_d[3]),
+            "sdotstar4": float(s_dot_d[4]),
+            "sdotstar5": float(s_dot_d[5]),
+            "sddotstar0": float(s_ddot_d[0]),
+            "sddotstar1": float(s_ddot_d[1]),
+            "sddotstar2": float(s_ddot_d[2]),
+            "sddotstar3": float(s_ddot_d[3]),
+            "sddotstar4": float(s_ddot_d[4]),
+            "sddotstar5": float(s_ddot_d[5]),
             "edot0": float(edot[0]), "edot1_val": float(edot[1]),
             "edot2_val": float(edot[2]), "edot3_val": float(edot[3]),
             "edot4_val": float(edot[4]), "edot5_val": float(edot[5]),
