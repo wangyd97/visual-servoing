@@ -147,8 +147,6 @@ def main():
 
     pipeline, intr = init_realsense()
     intrinsics_params = (intr.fx, intr.fy, intr.ppx, intr.ppy)
-    print(f"相机内参: {intrinsics_params}")
-    print(f"Experiment I method: {args.method}")
 
     controller = PBVSController(
         robot_ip=ROBOT_IP,

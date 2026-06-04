@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 from rtde_control import RTDEControlInterface as RTDEControl
 from rtde_receive import RTDEReceiveInterface as RTDEReceive
 
-from .config import PBVSConfig, TargetPose, vec6_to_str
+from .config import PBVSConfig, TargetPose
 from .geometry import (
     compute_L,
     compute_b,
@@ -46,9 +46,6 @@ class PBVSController:
         self.cur_target_idx = 0
 
         self._active_T_des: Optional[np.ndarray] = None
-        self._last_s_d = np.zeros(6)
-        self._last_s_dot_d = np.zeros(6)
-        self._last_s_ddot_d = np.zeros(6)
         self._last_accel_saturated = False
 
         self.stable_cnt = 0
@@ -62,23 +59,17 @@ class PBVSController:
             H=self.cfg.proxy_H,
             dt=self.dt
         )
-        self._sopd_a_star = np.zeros(6)
-        self._sopd_Phi = np.zeros(6)
-
         self._error_log: list = []
         self._t0: float = 0.0
         self._proxy_T_cam: Optional[np.ndarray] = None
 
         self._frame_idx = 0
 
-        self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
-        self._last_u_dot_c = np.zeros(6)
         self._last_u_o = np.zeros(6)
         self._last_R_base_cam: Optional[np.ndarray] = None
         self._last_s_for_diff: Optional[np.ndarray] = None
         self._last_s_diff_time: Optional[float] = None
-        self._s_dot_diff_filtered = np.zeros(6)
         self._u_o_filtered = np.zeros(6)
         self._last_u_o_for_diff: Optional[np.ndarray] = None
         self._last_u_o_diff_time: Optional[float] = None
@@ -87,7 +78,6 @@ class PBVSController:
 
     def set_targets(self, targets: List[TargetPose]):
         self.targets = targets
-        print(f"✓ 已加载 {len(targets)} 个目标位姿")
 
     def _switch_target(self, idx: int) -> bool:
         if idx >= len(self.targets):
@@ -96,32 +86,23 @@ class PBVSController:
         self.cur_target = self.targets[idx]
         self._active_T_des = self.cur_target.T_des.copy()
         self._reset_controller_state()
-        print(f"\n🎯 切换目标: {self.cur_target.name}")
         return True
 
     def _reset_controller_state(self):
         self.stable_cnt = 0
         self._u_c_integrated = np.zeros(6)
         self._psmc.reset()
-        self._sopd_a_star = np.zeros(6)
-        self._sopd_Phi = np.zeros(6)
         self._proxy_T_cam = None
-        self._cur_u_c = np.zeros(6)
         self._last_u_c = np.zeros(6)
-        self._last_u_dot_c = np.zeros(6)
         self._last_u_o = np.zeros(6)
         self._last_R_base_cam = None
         self._last_s_for_diff = None
         self._last_s_diff_time = None
-        self._s_dot_diff_filtered = np.zeros(6)
         self._u_o_filtered = np.zeros(6)
         self._last_u_o_for_diff = None
         self._last_u_o_diff_time = None
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
-        self._last_s_d = np.zeros(6)
-        self._last_s_dot_d = np.zeros(6)
-        self._last_s_ddot_d = np.zeros(6)
         self._last_accel_saturated = False
 
     def _desired_T(self) -> np.ndarray:
@@ -153,7 +134,6 @@ class PBVSController:
         T_err = T_des @ inv_T(T_current)
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
         q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
-        # print(f"Current quaternion: {q_oc}")
         if q_des[3] < 0:
             q_des = -q_des
         if np.dot(q_oc, q_des) < 0:
@@ -163,7 +143,6 @@ class PBVSController:
         L = compute_L(c_p_oc, q_oc, R_base_cam)
         if s_d_override is not None:
             s_d = np.asarray(s_d_override, dtype=float).reshape(6).copy()
-        # print(f"Current position: {c_p_oc}")
         s = np.concatenate([c_p_oc, q_oc[:3]])
         e = s_d - s
 
@@ -226,8 +205,6 @@ class PBVSController:
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
         b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
-        # b = np.zeros(6)  # --- IGNORE b ---
-        # print("N @ u_dot_o:", N @ u_dot_o)
         return L_inv @ (Phi - b - N @ u_dot_o)
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
@@ -274,25 +251,19 @@ class PBVSController:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
-        # u_o = np.zeros(6)  # --- IGNORE u_o---
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
         edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        # u_dot_o = np.zeros(6)  # --- IGNORE u_dot_o---
         self._last_u_o = u_o.copy()
         mode = self.cfg.controller_mode.upper()
-        proxy_H_cmd = np.full(6, float("nan"))
 
         if mode == "SOPD":
             # Eq. (24): alpha_c = K(s_d - s) + B(s_dot_d - s_dot).
             Phi_fb_raw = K @ e + B @ edot
-            a_star_raw = Phi_fb_raw.copy()
-            self._sopd_a_star = a_star_raw.copy()
             Phi = Phi_fb_raw + s_ddot_d_cmd
-            self._sopd_Phi = Phi.copy()
             # Eq. (25): u_dot_c = L^-1(alpha_c - b - N u_dot_o).
             u_dot_c = self._compute_u_dot_c(
                 Phi, q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
@@ -300,8 +271,6 @@ class PBVSController:
             self._last_accel_saturated = False
 
         elif "PSMC" in mode:
-            self._psmc.H = self.cfg.proxy_H.copy()
-            proxy_H_cmd = self.cfg.proxy_H.copy()
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
@@ -316,8 +285,6 @@ class PBVSController:
                 N=N,
                 u_dot_o=u_dot_o,
             )
-            a_star_raw = self._psmc.u_dot_c_star.copy()
-            Phi = self._psmc.alpha_c.copy()
             self._last_accel_saturated = self._psmc.is_accel_saturated
 
         else:
@@ -326,7 +293,7 @@ class PBVSController:
         # Eq. (42o): uc = uc,prv + T u_dot_c.
         self._u_c_integrated += u_dot_c * self.dt
 
-        return self._u_c_integrated, u_dot_c, s, s_d_cmd, e, edot, s_dot_by_interaction_matrix, a_star_raw, Phi, proxy_H_cmd
+        return self._u_c_integrated, u_dot_c, s, s_d_cmd, e, edot, s_dot_by_interaction_matrix
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
@@ -358,15 +325,11 @@ class PBVSController:
         
         if T_cur is None:
             self._last_u_c = np.zeros(6)
-            self._last_u_dot_c = np.zeros(6)
             self._last_s_for_diff = None
             self._frame_idx += 1
             return None, None, False, None, None, None
 
         _, s_d_ref, s_dot_d, s_ddot_d = self._fixed_reference()
-        self._last_s_d = s_d_ref.copy()
-        self._last_s_dot_d = s_dot_d.copy()
-        self._last_s_ddot_d = s_ddot_d.copy()
 
         if tcp_pose is None:
             actual_pose = np.array(self.rtde_r.getActualTCPPose())
@@ -376,7 +339,7 @@ class PBVSController:
         R_base_cam = R_base_tcp @ self.R_etc
         self._last_R_base_cam = R_base_cam.copy()
 
-        u_c, u_dot_c, s, s_d, e, edot, s_dot, a_star, Phi, proxy_H_cmd = self._compute_control(
+        u_c, u_dot_c, s, s_d, e, edot, s_dot = self._compute_control(
             T_cur,
             R_base_cam,
             s_dot_d=s_dot_d,
@@ -384,12 +347,7 @@ class PBVSController:
             s_d_ref=s_d_ref,
         )
 
-        self._last_s_d = s_d.copy()
-        self._last_s_dot_d = s_dot_d.copy()
-        self._last_s_ddot_d = s_ddot_d.copy()
         self._last_u_c = u_c.copy()
-        self._last_u_dot_c = u_dot_c.copy()
-        self._cur_u_c = u_c.copy()
 
         T_err = self._desired_T() @ inv_T(T_cur)
         t_err_vec = T_err[:3, 3]
@@ -415,19 +373,6 @@ class PBVSController:
             self.stable_cnt = 0
         converged = self.stable_cnt >= self.cfg.stable_frames
 
-        if self.cfg.enable_memory_log and "PSMC" in mode:
-            Phi_log = Phi.copy()
-            astar_log = a_star.copy()
-            proxy_s_log = self._psmc.proxy_position
-            proxy_b_log = self._psmc.proxy_offset
-            sat_a = self._last_accel_saturated
-        elif self.cfg.enable_memory_log:
-            Phi_log = self._sopd_Phi.copy()
-            astar_log = self._sopd_a_star.copy()
-            proxy_s_log = np.full(6, float("nan"))
-            proxy_b_log = np.full(6, float("nan"))
-            sat_a = self._last_accel_saturated
-
         t_now = time.time() - self._t0
         if self.cfg.enable_memory_log:
             des_corners_px = np.full((4, 2), float("nan"))
@@ -443,17 +388,8 @@ class PBVSController:
                 "ex": float(t_err_vec[0]*1000), "ey": float(t_err_vec[1]*1000),
                 "ez": float(t_err_vec[2]*1000),
                 "rx": float(r_euler[0]), "ry": float(r_euler[1]), "rz": float(r_euler[2]),
-                "Phi0": float(Phi_log[0]), "Phi1": float(Phi_log[1]), "Phi2": float(Phi_log[2]),
-                "Phi3": float(Phi_log[3]), "Phi4": float(Phi_log[4]), "Phi5": float(Phi_log[5]),
                 "udotc0": float(u_dot_c[0]), "udotc1": float(u_dot_c[1]), "udotc2": float(u_dot_c[2]),
                 "udotc3": float(u_dot_c[3]), "udotc4": float(u_dot_c[4]), "udotc5": float(u_dot_c[5]),
-                "as0": float(astar_log[0]), "as1": float(astar_log[1]), "as2": float(astar_log[2]),
-                "as3": float(astar_log[3]), "as4": float(astar_log[4]), "as5": float(astar_log[5]),
-                "proxy_s0": float(proxy_s_log[0]), "proxy_s1": float(proxy_s_log[1]), "proxy_s2": float(proxy_s_log[2]),
-                "proxy_s3": float(proxy_s_log[3]), "proxy_s4": float(proxy_s_log[4]), "proxy_s5": float(proxy_s_log[5]),
-                "h0": float(proxy_H_cmd[0]), "h1": float(proxy_H_cmd[1]), "h2": float(proxy_H_cmd[2]),
-                "h3": float(proxy_H_cmd[3]), "h4": float(proxy_H_cmd[4]), "h5": float(proxy_H_cmd[5]),
-                "sat_a": int(sat_a),
                 "target": self.cur_target.name,
                 "cx0": float(corners[0,0]), "cy0": float(corners[0,1]),
                 "cx1": float(corners[1,0]), "cy1": float(corners[1,1]),
@@ -485,25 +421,10 @@ class PBVSController:
             print("❌ 未设置目标")
             return
 
-        print("🤖 机器人复位中...")
         self.rtde_c.moveL(init_pose, 1.2, 1.0)
         self._switch_target(0)
 
         mode = self.cfg.controller_mode.upper()
-        is_psmc = "PSMC" in mode
-
-        print("\n" + "="*60)
-        print(f"🎮 SO-PBVS | {mode}")
-        print(f"   Kp={vec6_to_str(self.cfg.kp, 3)}")
-        print(f"   Kd={vec6_to_str(self.cfg.kd, 3)}")
-        print(f"   A ={vec6_to_str(self.cfg.accel_limit, 3)}")
-        print(f"   Detect stride: {self.cfg.detect_stride} | "
-              f"Visualization: {'ON' if self.cfg.enable_visualization else 'OFF'}"
-              f" stride={self.cfg.visualization_stride}")
-        if is_psmc:
-            print(f"   H ={vec6_to_str(self.cfg.proxy_H, 3)} s")
-        print("   按 'N' 切换目标 | 'Q' 退出")
-        print("="*60)
 
         self._t0 = time.time()
         self._error_log.clear()
