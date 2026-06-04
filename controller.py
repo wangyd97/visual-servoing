@@ -1,5 +1,5 @@
 import time
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import cv2
 import numpy as np
@@ -112,26 +112,9 @@ class PBVSController:
             return self.cur_target.T_des
         return np.eye(4)
 
-    def _fixed_reference(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        if self.cur_target is None:
-            T = np.eye(4)
-            z = np.zeros(6)
-            return T, z.copy(), z.copy(), z.copy()
-
-        T0 = self.cur_target.T_des.copy()
-        self._active_T_des = T0
-        q_des = Rotation.from_matrix(T0[:3, :3]).as_quat()
-        if q_des[3] < 0:
-            q_des = -q_des
-        s_d = np.concatenate([T0[:3, 3], q_des[:3]])
-        z = np.zeros(6)
-        return T0, s_d, z.copy(), z.copy()
-
     def _compute_feature_error(self, T_current: np.ndarray,
-                               R_base_cam: np.ndarray,
-                               s_d_override: np.ndarray = None):
+                               R_base_cam: np.ndarray):
         T_des = self._desired_T()
-        T_err = T_des @ inv_T(T_current)
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
         q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
         if q_des[3] < 0:
@@ -141,20 +124,14 @@ class PBVSController:
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
         L = compute_L(c_p_oc, q_oc, R_base_cam)
-        if s_d_override is not None:
-            s_d = np.asarray(s_d_override, dtype=float).reshape(6).copy()
         s = np.concatenate([c_p_oc, q_oc[:3]])
-        e = s_d - s
 
         try:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
             L_inv = np.linalg.pinv(L)
 
-        return s, s_d, e, q_oc, c_p_oc, L, L_inv, T_err
-
-    def _current_u_c(self) -> np.ndarray:
-        return self._last_u_c.copy()
+        return s, s_d, q_oc, c_p_oc, L, L_inv
 
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
         """Eq. (42a): obtain s_dot from visual-feature difference."""
@@ -198,14 +175,14 @@ class PBVSController:
         self._last_u_o_diff_time = now
         return self._u_dot_o_filtered.copy()
 
-    def _compute_u_dot_c(self, Phi: np.ndarray, q_oc: np.ndarray,
+    def _compute_u_dot_c(self, alpha_c: np.ndarray, q_oc: np.ndarray,
                   c_p_oc: np.ndarray, L: np.ndarray,
                   L_inv: np.ndarray, u_c: np.ndarray,
                   u_o: np.ndarray, u_dot_o: np.ndarray,
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
         b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
-        return L_inv @ (Phi - b - N @ u_dot_o)
+        return L_inv @ (alpha_c - b - N @ u_dot_o)
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
         try:
@@ -227,22 +204,16 @@ class PBVSController:
 
     def _compute_control(self, T_current: np.ndarray,
                          R_base_cam: np.ndarray,
-                         s_dot_d: np.ndarray = None,
-                         s_ddot_d: np.ndarray = None,
-                         s_d_ref: np.ndarray = None):
+                         s_dot_d: np.ndarray = None):
         if s_dot_d is None:
             s_dot_d = np.zeros(6)
-        if s_ddot_d is None:
-            s_ddot_d = np.zeros(6)
 
-        s, s_d_base, _, q_oc, c_p_oc, L, L_inv, T_err = self._compute_feature_error(
-            T_current, R_base_cam, s_d_override=s_d_ref
+        s, s_d, q_oc, c_p_oc, L, L_inv = self._compute_feature_error(
+            T_current, R_base_cam
         )
-        s_d_cmd = s_d_base
-        s_dot_d_cmd = s_dot_d
-        s_ddot_d_cmd = s_ddot_d
-        e = s_d_cmd - s
-        u_c = self._current_u_c()
+        
+        e = s_d - s
+        u_c = self._last_u_c.copy()
         
         N = compute_N(q_oc, R_base_cam)
         try:
@@ -251,34 +222,36 @@ class PBVSController:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
+        u_dot_o = self._compute_u_dot_o_by_difference(u_o)
+        u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
+        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
-        edot = s_dot_d_cmd - s_dot_by_interaction_matrix
-        u_dot_o = self._compute_u_dot_o_by_difference(u_o)
+        edot = s_dot_d - s_dot_by_interaction_matrix
         self._last_u_o = u_o.copy()
         mode = self.cfg.controller_mode.upper()
 
         if mode == "SOPD":
             # Eq. (24): alpha_c = K(s_d - s) + B(s_dot_d - s_dot).
-            Phi_fb_raw = K @ e + B @ edot
-            Phi = Phi_fb_raw + s_ddot_d_cmd
+            alpha_c = K @ e + B @ edot
             # Eq. (25): u_dot_c = L^-1(alpha_c - b - N u_dot_o).
             u_dot_c = self._compute_u_dot_c(
-                Phi, q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
+                alpha_c, q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
             )
             self._last_accel_saturated = False
 
         elif "PSMC" in mode:
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+            b = np.zeros(6)  # temporarily disable using b for control, since it's noisy
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,
                 s_dot=s_dot_by_interaction_matrix,
-                s_d=s_d_cmd,
-                s_dot_d=s_dot_d_cmd,
+                s_d=s_d,
+                s_dot_d=s_dot_d,
                 L=L,
                 L_inv=L_inv,
                 b=b,
@@ -293,7 +266,7 @@ class PBVSController:
         # Eq. (42o): uc = uc,prv + T u_dot_c.
         self._u_c_integrated += u_dot_c * self.dt
 
-        return self._u_c_integrated, u_dot_c, s, s_d_cmd, e, edot, s_dot_by_interaction_matrix
+        return self._u_c_integrated, u_dot_c
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
@@ -329,8 +302,6 @@ class PBVSController:
             self._frame_idx += 1
             return None, None, False, None, None, None
 
-        _, s_d_ref, s_dot_d, s_ddot_d = self._fixed_reference()
-
         if tcp_pose is None:
             actual_pose = np.array(self.rtde_r.getActualTCPPose())
         else:
@@ -339,13 +310,7 @@ class PBVSController:
         R_base_cam = R_base_tcp @ self.R_etc
         self._last_R_base_cam = R_base_cam.copy()
 
-        u_c, u_dot_c, s, s_d, e, edot, s_dot = self._compute_control(
-            T_cur,
-            R_base_cam,
-            s_dot_d=s_dot_d,
-            s_ddot_d=s_ddot_d,
-            s_d_ref=s_d_ref,
-        )
+        u_c, u_dot_c = self._compute_control(T_cur, R_base_cam)
 
         self._last_u_c = u_c.copy()
 
@@ -416,7 +381,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 10.0):
+    def run(self, pipeline, init_pose, move_acc: float = 12.0):
         if not self.targets:
             print("❌ 未设置目标")
             return

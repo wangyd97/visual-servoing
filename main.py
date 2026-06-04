@@ -41,8 +41,8 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[16.0] * 6,
-            kd=[8.0] * 6,
+            kp=[25.0] * 6,
+            kd=[12.0] * 6,
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -63,11 +63,11 @@ def method_params(method: str) -> dict:
         ),
         "P": dict(
             controller_mode="SOPDPSMC",
-            kp=[16.0] * 6,
+            kp=[100.0] * 6,
             kd=[8.0] * 6,
-            proxy_H=[0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-            accel_limit_pos=[999.0, 999.0, 999.0],
-            accel_limit_rot=[999.0, 999.0, 999.0],
+            proxy_H=[0.7, 0.7, 0.7, 0.7, 0.7, 0.7],
+            accel_limit_pos=[5.0, 5.0, 5.0],
+            accel_limit_rot=[20.0, 20.0, 20.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),

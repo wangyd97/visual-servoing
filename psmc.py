@@ -56,11 +56,10 @@ class PSMCPDProxy:
             self.s_p_prv = np.asarray(s, dtype=float).reshape(self.n).copy()
             self._initialized = True
 
-        # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + H s_p,prv/T).
-        self.s_p_star = np.linalg.solve(
-            I + H / T,
-            s_d + H @ s_dot_d + H @ self.s_p_prv / T,
-        )
+        # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + (H/T)s_p,prv).
+        self.s_p_star = (
+            s_d + self.H * s_dot_d + (self.H / T) * self.s_p_prv
+        ) / (1.0 + self.H / T)
 
         # Eq. (42j): alpha_c* = (K + B/T)s_p* - Ks - B(s_dot + s_p,prv/T).
         self.alpha_c_star = (
