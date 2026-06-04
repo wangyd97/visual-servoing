@@ -41,14 +41,14 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[25.0] * 6,
-            kd=[12.0] * 6,
+            kp=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
+            kd=[12.0, 12.0, 12.0, 12.0, 12.0, 12.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
         "R2": dict(
             controller_mode="SOPD",
-            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+            kp=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
             kd=[9.0, 9.0, 9.0, 9.0, 9.0, 9.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
@@ -56,18 +56,18 @@ def method_params(method: str) -> dict:
 
         "R3": dict(
             controller_mode="SOPD",
-            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
-            kd=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
+            kp=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
+            kd=[12.0, 12.0, 12.0, 12.0, 12.0, 12.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
         "P": dict(
             controller_mode="SOPDPSMC",
-            kp=[200.0] * 6,
-            kd=[2.0] * 6,
-            proxy_H=[0.4, 0.4, 0.4, 0.4, 0.4, 0.4],
+            kp=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
+            kd=[2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            proxy_H=[0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
             accel_limit_pos=[5.0, 5.0, 5.0],
-            accel_limit_rot=[20.0, 20.0, 20.0],
+            accel_limit_rot=[8.0, 8.0, 8.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),

@@ -123,8 +123,8 @@ class PBVSController:
             q_oc = -q_oc
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
-        L = compute_L(c_p_oc, q_oc, R_base_cam)
         s = np.concatenate([c_p_oc, q_oc[:3]])
+        L = compute_L(c_p_oc, q_oc, R_base_cam)
 
         try:
             L_inv = np.linalg.inv(L)
@@ -223,8 +223,8 @@ class PBVSController:
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
-        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
+        # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
+        # u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -381,7 +381,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 12.0):
+    def run(self, pipeline, init_pose, move_acc: float = 6.0):
         if not self.targets:
             print("❌ 未设置目标")
             return
