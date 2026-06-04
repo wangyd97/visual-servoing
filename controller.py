@@ -12,9 +12,9 @@ from rtde_receive import RTDEReceiveInterface as RTDEReceive
 
 from .config import CSV_COLUMNS, PBVSConfig, TargetPose, vec6_to_str
 from .geometry import (
-    compute_L2s,
-    compute_L2_b,
-    compute_N2s,
+    compute_L,
+    compute_b,
+    compute_N,
     get_tag_3d_corners,
     inv_T,
     project_3d_to_2d,
@@ -193,7 +193,7 @@ class PBVSController:
             q_oc = -q_oc
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
-        Ls = compute_L2s(c_p_oc, q_oc, R_base_cam)
+        Ls = compute_L(c_p_oc, q_oc, R_base_cam)
         if s_d_override is not None:
             s_d = np.asarray(s_d_override, dtype=float).reshape(6).copy()
 
@@ -266,7 +266,8 @@ class PBVSController:
                   u_o: np.ndarray, u_dot_o: np.ndarray,
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
-        b = compute_L2_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+        b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+        # b = np.zeros(6)  # --- IGNORE b ---
         # print("N @ u_dot_o:", N @ u_dot_o)
         return Ls_inv @ (Phi - b - N @ u_dot_o)
 
@@ -326,14 +327,14 @@ class PBVSController:
         e = s_d_cmd - s
         u_c = self._current_u_c()
         
-        N = compute_N2s(q_oc, R_base_cam)
+        N = compute_N(q_oc, R_base_cam)
         try:
             N_inv = np.linalg.inv(N)
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - Ls @ u_c))
-        # u_o = np.zeros(6)  # --- IGNORE ---
+        # u_o = np.zeros(6)  # --- IGNORE u_o---
         s_dot_by_interaction_matrix = Ls @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -341,7 +342,7 @@ class PBVSController:
         # u_o = N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix)
         edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        # u_dot_o = np.zeros(6)  # --- IGNORE ---
+        u_dot_o = np.zeros(6)  # --- IGNORE u_dot_o---
         self._last_u_o = u_o.copy()
         print("u_o:", u_o)
         mode = self.cfg.controller_mode.upper()
@@ -371,7 +372,8 @@ class PBVSController:
             self._psmc.H = self.cfg.proxy_H.copy()
             proxy_H_cmd = self.cfg.proxy_H.copy()
             # Eq. (42h): b = b(s, qc, uc, uo).
-            b = compute_L2_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+            b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+            # b= np.zeros(6)  # --- IGNORE b ---
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,

@@ -42,8 +42,8 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[16.0] * 6,
-            kd=[9.0] * 6,
+            kp=[25.0] * 6,
+            kd=[12.0] * 6,
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -74,10 +74,10 @@ def method_params(method: str) -> dict:
         "P": dict(
             controller_mode="SOPDPSMC",
             kp=[300.0] * 6,
-            kd=[5.0] * 6,
+            kd=[8.0] * 6,
             proxy_H=[0.65, 0.65, 0.65, 0.65, 0.65, 0.65],
-            accel_limit_pos=[15.0, 15.0, 15.0],
-            accel_limit_rot=[30.0, 30.0, 30.0],
+            accel_limit_pos=[999.0, 999.0, 999.0],
+            accel_limit_rot=[999.0, 999.0, 999.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -130,7 +130,7 @@ def build_targets():
             desired_rotation=Rotation.from_euler(
                 "xyz", (0, 0, 0), degrees=True
             ).as_matrix(),
-            desired_translation=np.array([0.00, 0.00, 0.30]),
+            desired_translation=np.array([0.00, 0.00, 0.25]),
         ),
         TargetPose(
             name="Large_error_target_2",
