@@ -58,7 +58,7 @@ def compute_N2s(q_oc: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
     Rt = R_base_cam.T
     return np.block([
         [Rt, np.zeros((3, 3))],
-        [np.zeros((3, 3)), -B1_mat(q_oc)],
+        [np.zeros((3, 3)), -B1_mat(q_oc) @ Rt],
     ])
 
 

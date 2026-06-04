@@ -327,20 +327,20 @@ class PBVSController:
         u_c = self._current_u_c()
         
         N = compute_N2s(q_oc, R_base_cam)
-        s_dot_by_interaction_matrix = Ls @ u_c + N @ self._filter_u_o(self._last_u_o)
-        s_dot_by_difference = self._compute_s_dot_by_difference(s)
-        K = np.diag(self.cfg.kp)
-        B = np.diag(self.cfg.kd)
         try:
             N_inv = np.linalg.inv(N)
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
-        # Eq. (42g): uo = N^{-1}(s_dot - L uc).
+        s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - Ls @ u_c))
+        # u_o = np.zeros(6)  # --- IGNORE ---
+        s_dot_by_interaction_matrix = Ls @ u_c + N @ u_o
+        K = np.diag(self.cfg.kp)
+        B = np.diag(self.cfg.kd)
+        # Eq. (42g): uo = N^{-1}(s_dot - L uc).
         # u_o = N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix)
         edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        # u_o = np.zeros(6)  # --- IGNORE ---
         # u_dot_o = np.zeros(6)  # --- IGNORE ---
         self._last_u_o = u_o.copy()
         print("u_o:", u_o)
