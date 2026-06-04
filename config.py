@@ -78,11 +78,8 @@ class PBVSConfig:
 
     plot_save_path: str = "pbvs_error_plot.png"
     trajectory_plot_save_path: str = ""
-    csv_save_path: str = "pbvs_state_log.csv"
-    enable_csv_logging: bool = True
     enable_memory_log: bool = True
     enable_final_plots: bool = True
-    csv_flush_interval: int = 50
     status_print_interval: int = 1
 
     def __post_init__(self):
@@ -94,7 +91,6 @@ class PBVSConfig:
         self.slow_after_convergence = bool(self.slow_after_convergence)
         self.convergence_slowdown_frames = max(0, int(self.convergence_slowdown_frames))
         self.convergence_velocity_scale = float(np.clip(self.convergence_velocity_scale, 0.0, 1.0))
-        self.enable_csv_logging = bool(self.enable_csv_logging)
         self.enable_memory_log = bool(self.enable_memory_log)
         self.enable_final_plots = bool(self.enable_final_plots)
         self.status_print_interval = max(1, int(self.status_print_interval))
@@ -132,26 +128,3 @@ class TargetPose:
         self.T_des = np.eye(4)
         self.T_des[:3, :3] = self.desired_rotation
         self.T_des[:3, 3] = self.desired_translation
-CSV_COLUMNS = [
-    "t", "frame_idx", "target",
-    "err_pos_mm", "ex_mm", "ey_mm", "ez_mm",
-    "err_rot_deg", "rx_deg", "ry_deg", "rz_deg",
-    "s0", "s1", "s2", "s3", "s4", "s5",
-    "sstar0", "sstar1", "sstar2", "sstar3", "sstar4", "sstar5",
-    "sdotstar0", "sdotstar1", "sdotstar2", "sdotstar3", "sdotstar4", "sdotstar5",
-    "sddotstar0", "sddotstar1", "sddotstar2", "sddotstar3", "sddotstar4", "sddotstar5",
-    "edot0", "edot1_val", "edot2_val", "edot3_val", "edot4_val", "edot5_val",
-    "astar0", "astar1", "astar2", "astar3", "astar4", "astar5",
-    "Phi0", "Phi1", "Phi2", "Phi3", "Phi4", "Phi5",
-    "accel_saturated",
-    "proxy_s0", "proxy_s1", "proxy_s2", "proxy_s3", "proxy_s4", "proxy_s5",
-    "proxy_H0", "proxy_H1", "proxy_H2", "proxy_H3", "proxy_H4", "proxy_H5",
-    "proxy_b0", "proxy_b1", "proxy_b2", "proxy_b3", "proxy_b4", "proxy_b5",
-    "uc0", "uc1", "uc2", "uc3", "uc4", "uc5",
-    "vtcp0", "vtcp1", "vtcp2", "vtcp3", "vtcp4", "vtcp5",
-    "vtcp_lin_norm", "vtcp_ang_norm",
-    "udotc0", "udotc1", "udotc2", "udotc3", "udotc4", "udotc5",
-    "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
-    "cx0", "cy0", "cx1", "cy1", "cx2", "cy2", "cx3", "cy3",
-    "stable_count", "converged", "mode",
-]

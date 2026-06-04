@@ -18,7 +18,6 @@ else:
 
 
 ENABLE_VISUALIZATION = True
-ENABLE_CSV_LOGGING = True
 ENABLE_MEMORY_LOG = True
 ENABLE_FINAL_PLOTS = True
 STATUS_PRINT_INTERVAL = 30
@@ -42,15 +41,15 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[25.0] * 6,
-            kd=[12.0] * 6,
+            kp=[16.0] * 6,
+            kd=[8.0] * 6,
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
         "R2": dict(
             controller_mode="SOPD",
-            kp=[40.0, 40.0, 40.0, 40.0, 40.0, 40.0],
-            kd=[15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
+            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+            kd=[9.0, 9.0, 9.0, 9.0, 9.0, 9.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -62,20 +61,11 @@ def method_params(method: str) -> dict:
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
-        "RS": dict(
-            controller_mode="SOPD_SAT",
-            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
-            kd=[15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
-            accel_limit_pos=[5.0, 5.0, 5.0],
-            accel_limit_rot=[10.0, 10.0, 10.0],
-            max_linear_vel=float("inf"),
-            max_angular_vel=float("inf"),
-        ),
         "P": dict(
             controller_mode="SOPDPSMC",
-            kp=[300.0] * 6,
+            kp=[16.0] * 6,
             kd=[8.0] * 6,
-            proxy_H=[0.65, 0.65, 0.65, 0.65, 0.65, 0.65],
+            proxy_H=[0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
             accel_limit_pos=[999.0, 999.0, 999.0],
             accel_limit_rot=[999.0, 999.0, 999.0],
             max_linear_vel=float("inf"),
@@ -89,15 +79,12 @@ def method_params(method: str) -> dict:
 
 def output_stem(method: str) -> str:
     method = method.upper()
-    if method == "RS":
-        return "SOPD_SAT"
     return "SOPDPSMC" if method == "P" else f"SOPD_{method}"
 
 
 def build_config(method: str, runtime: float) -> PBVSConfig:
     project_dir = Path(__file__).resolve().parent
     figure_dir = project_dir / "exp_figures"
-    csv_dir = project_dir / "csv_data"
     file_stem = output_stem(method)
     params = method_params(method)
 
@@ -114,8 +101,6 @@ def build_config(method: str, runtime: float) -> PBVSConfig:
         max_runtime=runtime,
         plot_save_path=str(figure_dir / f"{file_stem}.png"),
         trajectory_plot_save_path=str(figure_dir / f"{file_stem}_trajectory.png"),
-        csv_save_path=str(csv_dir / f"{file_stem}.csv"),
-        enable_csv_logging=ENABLE_CSV_LOGGING,
         enable_memory_log=ENABLE_MEMORY_LOG,
         enable_final_plots=ENABLE_FINAL_PLOTS,
         status_print_interval=STATUS_PRINT_INTERVAL,
@@ -130,7 +115,7 @@ def build_targets():
             desired_rotation=Rotation.from_euler(
                 "xyz", (0, 0, 0), degrees=True
             ).as_matrix(),
-            desired_translation=np.array([0.00, 0.00, 0.25]),
+            desired_translation=np.array([0.00, 0.00, 0.28]),
         ),
         TargetPose(
             name="Large_error_target_2",
@@ -148,7 +133,7 @@ def main():
     )
     parser.add_argument(
         "--method",
-        choices=["R1", "R2", "R3", "RS", "P"],
+        choices=["R1", "R2", "R3", "P"],
         default="R3",
         help="Controller preset to run.",
     )
@@ -164,7 +149,6 @@ def main():
     intrinsics_params = (intr.fx, intr.fy, intr.ppx, intr.ppy)
     print(f"相机内参: {intrinsics_params}")
     print(f"Experiment I method: {args.method}")
-    print(f"CSV output stem: {output_stem(args.method)}")
 
     controller = PBVSController(
         robot_ip=ROBOT_IP,

@@ -35,22 +35,14 @@ def compute_c_Q_oc(q_oc: np.ndarray) -> np.ndarray:
     return q0 * np.eye(3) - skew(qv)
 
 
-def compute_L_hat(c_p_oc: np.ndarray, q_oc: np.ndarray) -> np.ndarray:
-    """Camera-frame interaction matrix block from Eq. (20)."""
-    c_Q_oc = compute_c_Q_oc(q_oc)
-    return np.block([
-        [-np.eye(3),       skew(c_p_oc)     ],
-        [np.zeros((3, 3)), -0.5 * c_Q_oc    ]
-    ])
-
-
 def compute_L(c_p_oc: np.ndarray, q_oc: np.ndarray,
               R_base_cam: np.ndarray) -> np.ndarray:
-    """Eq. (20): L(s,qc)=Lhat(s) diag(Rc.T, Rc.T), input is base-frame uc."""
+    """Eq. (20): L(s,qc), input is base-frame camera twist uc."""
     Rt = R_base_cam.T
-    return compute_L_hat(c_p_oc, q_oc) @ np.block([
-        [Rt, np.zeros((3, 3))],
-        [np.zeros((3, 3)), Rt],
+    c_Q_oc = compute_c_Q_oc(q_oc)
+    return np.block([
+        [-Rt,       skew(c_p_oc) @ Rt],
+        [np.zeros((3, 3)), -0.5 * c_Q_oc @ Rt]
     ])
 
 
@@ -75,12 +67,16 @@ def compute_b(c_p_oc: np.ndarray, q_oc: np.ndarray,
     omega_c_cam = R_base_cam.T @ omega_c_base
     omega_rel_base = omega_o_base - omega_c_base
     N = compute_N(q_oc, R_base_cam)
-    b_trans = (
-        N[:3, :3] @ (2.0 * np.cross(v_o_base - v_c_base, omega_c_base))
-        + skew(omega_c_cam) @ skew(omega_c_cam) @ c_p_oc
+    # Eq. (23): b = N[2(vo-vc)x omega_c, omega_o x omega_c]^T
+    #              + [[Rc.T omega_c x]^2 c_p_oc,
+    #                 -||omega_o-omega_c||^2 q_oc / 4]^T.
+    return (
+        N @ np.concatenate([
+            2.0 * np.cross(v_o_base - v_c_base, omega_c_base),
+            np.cross(omega_o_base, omega_c_base),
+        ])
+        + np.concatenate([
+            skew(omega_c_cam) @ skew(omega_c_cam) @ c_p_oc,
+            -0.25 * float(omega_rel_base @ omega_rel_base) * q_oc[:3],
+        ])
     )
-    b_rot = (
-        N[3:, 3:] @ np.cross(omega_o_base, omega_c_base)
-        - 0.25 * float(omega_rel_base @ omega_rel_base) * q_oc[:3]
-    )
-    return np.concatenate([b_trans, b_rot])

@@ -1,6 +1,4 @@
-import csv
 import time
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 import cv2
@@ -10,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 from rtde_control import RTDEControlInterface as RTDEControl
 from rtde_receive import RTDEReceiveInterface as RTDEReceive
 
-from .config import CSV_COLUMNS, PBVSConfig, TargetPose, vec6_to_str
+from .config import PBVSConfig, TargetPose, vec6_to_str
 from .geometry import (
     compute_L,
     compute_b,
@@ -64,7 +62,6 @@ class PBVSController:
             H=self.cfg.proxy_H,
             dt=self.dt
         )
-        self._sopd_A = self.cfg.accel_limit.copy()
         self._sopd_a_star = np.zeros(6)
         self._sopd_Phi = np.zeros(6)
 
@@ -72,8 +69,6 @@ class PBVSController:
         self._t0: float = 0.0
         self._proxy_T_cam: Optional[np.ndarray] = None
 
-        self._csv_file = None
-        self._csv_writer = None
         self._frame_idx = 0
 
         self._cur_u_c = np.zeros(6)
@@ -89,35 +84,6 @@ class PBVSController:
         self._last_u_o_diff_time: Optional[float] = None
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
-
-    def _open_csv(self):
-        if not self.cfg.enable_csv_logging:
-            return
-        path = Path(self.cfg.csv_save_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._csv_file = open(path, "w", newline="", encoding="utf-8")
-        self._csv_writer = csv.DictWriter(
-            self._csv_file, fieldnames=CSV_COLUMNS, extrasaction="ignore"
-        )
-        self._csv_writer.writeheader()
-        print(f"📄 CSV: {path}")
-
-    def _close_csv(self):
-        if self._csv_file:
-            self._csv_file.flush()
-            self._csv_file.close()
-            self._csv_file = self._csv_writer = None
-            print(f"✅ CSV 已保存: {self.cfg.csv_save_path}")
-
-    def _write_csv_row(self, row: dict):
-        if not self._csv_writer:
-            return
-        if callable(row):
-            row = row()
-        clean = {k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()}
-        self._csv_writer.writerow(clean)
-        if self._frame_idx % self.cfg.csv_flush_interval == 0:
-            self._csv_file.flush()
 
     def set_targets(self, targets: List[TargetPose]):
         self.targets = targets
@@ -187,53 +153,46 @@ class PBVSController:
         T_err = T_des @ inv_T(T_current)
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
         q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
+        # print(f"Current quaternion: {q_oc}")
         if q_des[3] < 0:
             q_des = -q_des
         if np.dot(q_oc, q_des) < 0:
             q_oc = -q_oc
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
-        Ls = compute_L(c_p_oc, q_oc, R_base_cam)
+        L = compute_L(c_p_oc, q_oc, R_base_cam)
         if s_d_override is not None:
             s_d = np.asarray(s_d_override, dtype=float).reshape(6).copy()
-
+        # print(f"Current position: {c_p_oc}")
         s = np.concatenate([c_p_oc, q_oc[:3]])
         e = s_d - s
 
         try:
-            Ls_inv = np.linalg.inv(Ls)
+            L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
-            Ls_inv = np.linalg.pinv(Ls)
+            L_inv = np.linalg.pinv(L)
 
-        return s, s_d, e, q_oc, c_p_oc, Ls, Ls_inv, T_err
+        return s, s_d, e, q_oc, c_p_oc, L, L_inv, T_err
 
     def _current_u_c(self) -> np.ndarray:
         return self._last_u_c.copy()
 
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
-        """Eq. (42a): obtain s_dot from a filtered visual-feature difference."""
+        """Eq. (42a): obtain s_dot from visual-feature difference."""
         s = np.asarray(s, dtype=float).reshape(6)
         now = time.perf_counter()
         if self._last_s_for_diff is None or self._last_s_diff_time is None:
-            self._s_dot_diff_filtered = np.zeros(6)
+            s_dot = np.zeros(6)
         else:
             dt = max(now - self._last_s_diff_time, 1e-4)
-            s_dot_raw = (s - self._last_s_for_diff) / dt
-            tau = 0.04
-            beta = tau / (tau + dt)
-            self._s_dot_diff_filtered = (
-                beta * self._s_dot_diff_filtered
-                + (1.0 - beta) * s_dot_raw
-            )
+            s_dot = (s - self._last_s_for_diff) / dt
         self._last_s_for_diff = s.copy()
         self._last_s_diff_time = now
-        return self._s_dot_diff_filtered.copy()
+        return s_dot.copy()
 
     def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
         u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
-        deadband = np.array([0.015, 0.015, 0.015, 0.05, 0.05, 0.05])
-        limits = np.array([0.50, 0.50, 0.50, 2.0, 2.0, 2.0])
-        u_o[np.abs(u_o) < deadband] = 0.0
+        limits = np.array([2.0, 2.0, 2.0, 8.0, 8.0, 8.0])
         u_o = np.clip(u_o, -limits, limits)
         tau = 0.12
         beta = tau / (tau + self.dt)
@@ -261,34 +220,15 @@ class PBVSController:
         return self._u_dot_o_filtered.copy()
 
     def _compute_u_dot_c(self, Phi: np.ndarray, q_oc: np.ndarray,
-                  c_p_oc: np.ndarray, Ls: np.ndarray,
-                  Ls_inv: np.ndarray, u_c: np.ndarray,
+                  c_p_oc: np.ndarray, L: np.ndarray,
+                  L_inv: np.ndarray, u_c: np.ndarray,
                   u_o: np.ndarray, u_dot_o: np.ndarray,
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
         b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
         # b = np.zeros(6)  # --- IGNORE b ---
         # print("N @ u_dot_o:", N @ u_dot_o)
-        return Ls_inv @ (Phi - b - N @ u_dot_o)
-
-    @staticmethod
-    def _clip_3d(x: np.ndarray, A: float) -> np.ndarray:
-        norm = float(np.linalg.norm(x))
-        if norm <= A or A == float("inf"):
-            return x.copy()
-        return (A / max(norm, A)) * x
-
-    def _clip_camera_acceleration(self, u_dot_c: np.ndarray) -> np.ndarray:
-        clipped = np.zeros_like(u_dot_c)
-        clipped[:3] = self._clip_3d(u_dot_c[:3], float(self._sopd_A[0]))
-        clipped[3:] = self._clip_3d(u_dot_c[3:], float(self._sopd_A[3]))
-        return clipped
-
-    def _is_camera_accel_saturated(self, u_dot_c: np.ndarray) -> bool:
-        return (
-            np.linalg.norm(u_dot_c[:3]) > float(self._sopd_A[0])
-            or np.linalg.norm(u_dot_c[3:]) > float(self._sopd_A[3])
-        )
+        return L_inv @ (Phi - b - N @ u_dot_o)
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
         try:
@@ -318,7 +258,7 @@ class PBVSController:
         if s_ddot_d is None:
             s_ddot_d = np.zeros(6)
 
-        s, s_d_base, _, q_oc, c_p_oc, Ls, Ls_inv, T_err = self._compute_feature_error(
+        s, s_d_base, _, q_oc, c_p_oc, L, L_inv, T_err = self._compute_feature_error(
             T_current, R_base_cam, s_d_override=s_d_ref
         )
         s_d_cmd = s_d_base
@@ -333,55 +273,45 @@ class PBVSController:
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
-        u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - Ls @ u_c))
+        u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         # u_o = np.zeros(6)  # --- IGNORE u_o---
-        s_dot_by_interaction_matrix = Ls @ u_c + N @ u_o
+        s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
-        # u_o = N_inv @ (s_dot_by_difference - s_dot_by_interaction_matrix)
         edot = s_dot_d_cmd - s_dot_by_interaction_matrix
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        u_dot_o = np.zeros(6)  # --- IGNORE u_dot_o---
+        # u_dot_o = np.zeros(6)  # --- IGNORE u_dot_o---
         self._last_u_o = u_o.copy()
-        print("u_o:", u_o)
         mode = self.cfg.controller_mode.upper()
         proxy_H_cmd = np.full(6, float("nan"))
+
         if mode == "SOPD":
-            # Baseline: alpha_c = Kp(s* - s) + Kd(s_dot* - s_dot).
+            # Eq. (24): alpha_c = K(s_d - s) + B(s_dot_d - s_dot).
             Phi_fb_raw = K @ e + B @ edot
             a_star_raw = Phi_fb_raw.copy()
             self._sopd_a_star = a_star_raw.copy()
             Phi = Phi_fb_raw + s_ddot_d_cmd
             self._sopd_Phi = Phi.copy()
+            # Eq. (25): u_dot_c = L^-1(alpha_c - b - N u_dot_o).
+            u_dot_c = self._compute_u_dot_c(
+                Phi, q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
+            )
             self._last_accel_saturated = False
 
-        elif mode == "SOPD_SAT":
-            # Eq. (28)-style naive baseline: clip camera acceleration u_dot_c.
-            Phi_fb_raw = K @ e + B @ edot
-            a_star_raw = Phi_fb_raw.copy()
-            self._sopd_a_star = a_star_raw.copy()
-            Phi = Phi_fb_raw + s_ddot_d_cmd
-            self._sopd_Phi = Phi.copy()
-            u_dot_c_raw = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv,
-                                                u_c, u_o, u_dot_o, N, R_base_cam)
-            u_dot_c = self._clip_camera_acceleration(u_dot_c_raw)
-            self._last_accel_saturated = self._is_camera_accel_saturated(u_dot_c_raw)
-
-        else:
+        elif "PSMC" in mode:
             self._psmc.H = self.cfg.proxy_H.copy()
             proxy_H_cmd = self.cfg.proxy_H.copy()
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
-            # b= np.zeros(6)  # --- IGNORE b ---
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,
                 s_dot=s_dot_by_interaction_matrix,
                 s_d=s_d_cmd,
                 s_dot_d=s_dot_d_cmd,
-                L=Ls,
-                L_inv=Ls_inv,
+                L=L,
+                L_inv=L_inv,
                 b=b,
                 N=N,
                 u_dot_o=u_dot_o,
@@ -389,9 +319,9 @@ class PBVSController:
             a_star_raw = self._psmc.u_dot_c_star.copy()
             Phi = self._psmc.alpha_c.copy()
             self._last_accel_saturated = self._psmc.is_accel_saturated
-        if mode == "SOPD":
-            u_dot_c = self._compute_u_dot_c(Phi, q_oc, c_p_oc, Ls, Ls_inv,
-                                            u_c, u_o, u_dot_o, N, R_base_cam)
+
+        else:
+            raise ValueError(f"Unsupported controller mode: {mode}")
 
         # Eq. (42o): uc = uc,prv + T u_dot_c.
         self._u_c_integrated += u_dot_c * self.dt
@@ -430,7 +360,7 @@ class PBVSController:
             self._last_u_c = np.zeros(6)
             self._last_u_dot_c = np.zeros(6)
             self._last_s_for_diff = None
-            self._write_lost_frame_row(tcp_pose)
+            self._frame_idx += 1
             return None, None, False, None, None, None
 
         _, s_d_ref, s_dot_d, s_ddot_d = self._fixed_reference()
@@ -485,20 +415,17 @@ class PBVSController:
             self.stable_cnt = 0
         converged = self.stable_cnt >= self.cfg.stable_frames
 
-        log_needed = self.cfg.enable_memory_log or self._csv_writer is not None
-        if log_needed and "PSMC" in mode:
+        if self.cfg.enable_memory_log and "PSMC" in mode:
             Phi_log = Phi.copy()
             astar_log = a_star.copy()
             proxy_s_log = self._psmc.proxy_position
             proxy_b_log = self._psmc.proxy_offset
             sat_a = self._last_accel_saturated
-        elif log_needed:
+        elif self.cfg.enable_memory_log:
             Phi_log = self._sopd_Phi.copy()
             astar_log = self._sopd_a_star.copy()
             proxy_s_log = np.full(6, float("nan"))
             proxy_b_log = np.full(6, float("nan"))
-            sat_a = self._last_accel_saturated
-        else:
             sat_a = self._last_accel_saturated
 
         t_now = time.time() - self._t0
@@ -541,97 +468,9 @@ class PBVSController:
                 "tcp_z": float(tcp_pose[2]) if tcp_pose is not None else float("nan"),
             })
 
-        self._write_csv_row(lambda: {
-            "t": t_now, "frame_idx": self._frame_idx, "target": self.cur_target.name,
-            "err_pos_mm": err_pos*1000.0,
-            "ex_mm": float(t_err_vec[0]*1000), "ey_mm": float(t_err_vec[1]*1000),
-            "ez_mm": float(t_err_vec[2]*1000),
-            "err_rot_deg": float(np.rad2deg(err_rot)),
-            "rx_deg": float(r_euler[0]), "ry_deg": float(r_euler[1]),
-            "rz_deg": float(r_euler[2]),
-            "s0": float(s[0]), "s1": float(s[1]), "s2": float(s[2]),
-            "s3": float(s[3]), "s4": float(s[4]), "s5": float(s[5]),
-            "sstar0": float(s_d[0]), "sstar1": float(s_d[1]),
-            "sstar2": float(s_d[2]), "sstar3": float(s_d[3]),
-            "sstar4": float(s_d[4]), "sstar5": float(s_d[5]),
-            "sdotstar0": float(s_dot_d[0]),
-            "sdotstar1": float(s_dot_d[1]),
-            "sdotstar2": float(s_dot_d[2]),
-            "sdotstar3": float(s_dot_d[3]),
-            "sdotstar4": float(s_dot_d[4]),
-            "sdotstar5": float(s_dot_d[5]),
-            "sddotstar0": float(s_ddot_d[0]),
-            "sddotstar1": float(s_ddot_d[1]),
-            "sddotstar2": float(s_ddot_d[2]),
-            "sddotstar3": float(s_ddot_d[3]),
-            "sddotstar4": float(s_ddot_d[4]),
-            "sddotstar5": float(s_ddot_d[5]),
-            "edot0": float(edot[0]), "edot1_val": float(edot[1]),
-            "edot2_val": float(edot[2]), "edot3_val": float(edot[3]),
-            "edot4_val": float(edot[4]), "edot5_val": float(edot[5]),
-            "astar0": float(a_star[0]), "astar1": float(a_star[1]),
-            "astar2": float(a_star[2]), "astar3": float(a_star[3]),
-            "astar4": float(a_star[4]), "astar5": float(a_star[5]),
-            "Phi0": float(Phi_log[0]), "Phi1": float(Phi_log[1]),
-            "Phi2": float(Phi_log[2]), "Phi3": float(Phi_log[3]),
-            "Phi4": float(Phi_log[4]), "Phi5": float(Phi_log[5]),
-            "accel_saturated": int(sat_a),
-            "proxy_s0": float(proxy_s_log[0]), "proxy_s1": float(proxy_s_log[1]),
-            "proxy_s2": float(proxy_s_log[2]), "proxy_s3": float(proxy_s_log[3]),
-            "proxy_s4": float(proxy_s_log[4]), "proxy_s5": float(proxy_s_log[5]),
-            "proxy_H0": float(proxy_H_cmd[0]), "proxy_H1": float(proxy_H_cmd[1]),
-            "proxy_H2": float(proxy_H_cmd[2]), "proxy_H3": float(proxy_H_cmd[3]),
-            "proxy_H4": float(proxy_H_cmd[4]), "proxy_H5": float(proxy_H_cmd[5]),
-            "proxy_b0": float(proxy_b_log[0]), "proxy_b1": float(proxy_b_log[1]),
-            "proxy_b2": float(proxy_b_log[2]), "proxy_b3": float(proxy_b_log[3]),
-            "proxy_b4": float(proxy_b_log[4]), "proxy_b5": float(proxy_b_log[5]),
-            "uc0": float(u_c[0]), "uc1": float(u_c[1]),
-            "uc2": float(u_c[2]), "uc3": float(u_c[3]),
-            "uc4": float(u_c[4]), "uc5": float(u_c[5]),
-            "vtcp0": float(v_ctrl[0]), "vtcp1": float(v_ctrl[1]),
-            "vtcp2": float(v_ctrl[2]), "vtcp3": float(v_ctrl[3]),
-            "vtcp4": float(v_ctrl[4]), "vtcp5": float(v_ctrl[5]),
-            "vtcp_lin_norm": float(np.linalg.norm(v_ctrl[:3])),
-            "vtcp_ang_norm": float(np.linalg.norm(v_ctrl[3:])),
-            "udotc0": float(u_dot_c[0]), "udotc1": float(u_dot_c[1]),
-            "udotc2": float(u_dot_c[2]), "udotc3": float(u_dot_c[3]),
-            "udotc4": float(u_dot_c[4]), "udotc5": float(u_dot_c[5]),
-            "tcp_x": float(tcp_pose[0]) if tcp_pose is not None else float("nan"),
-            "tcp_y": float(tcp_pose[1]) if tcp_pose is not None else float("nan"),
-            "tcp_z": float(tcp_pose[2]) if tcp_pose is not None else float("nan"),
-            "tcp_rx": float(tcp_pose[3]) if tcp_pose is not None else float("nan"),
-            "tcp_ry": float(tcp_pose[4]) if tcp_pose is not None else float("nan"),
-            "tcp_rz": float(tcp_pose[5]) if tcp_pose is not None else float("nan"),
-            "cx0": float(corners[0,0]), "cy0": float(corners[0,1]),
-            "cx1": float(corners[1,0]), "cy1": float(corners[1,1]),
-            "cx2": float(corners[2,0]), "cy2": float(corners[2,1]),
-            "cx3": float(corners[3,0]), "cy3": float(corners[3,1]),
-            "stable_count": self.stable_cnt, "converged": int(converged),
-            "mode": mode,
-        })
         self._frame_idx += 1
 
         return v_ctrl, (err_pos, err_rot), converged, corners, R_cur, t_cur
-
-    def _write_lost_frame_row(self, tcp_pose=None):
-        if not self._csv_writer:
-            self._frame_idx += 1
-            return
-        nan = float("nan")
-        row = {col: nan for col in CSV_COLUMNS}
-        row.update({
-            "t": time.time() - self._t0,
-            "frame_idx": self._frame_idx,
-            "target": self.cur_target.name if self.cur_target else "",
-            "mode": self.cfg.controller_mode.upper(),
-            "converged": 0,
-            "stable_count": self.stable_cnt,
-        })
-        if tcp_pose is not None:
-            for i, k in enumerate(["tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz"]):
-                row[k] = float(tcp_pose[i])
-        self._write_csv_row(row)
-        self._frame_idx += 1
 
     def plot_error_history(self):
         from .plotting import plot_error_history
@@ -641,7 +480,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 12.0):
+    def run(self, pipeline, init_pose, move_acc: float = 10.0):
         if not self.targets:
             print("❌ 未设置目标")
             return
@@ -669,7 +508,6 @@ class PBVSController:
         self._t0 = time.time()
         self._error_log.clear()
         self._frame_idx = 0
-        self._open_csv()
 
         try:
             while True:
@@ -731,7 +569,6 @@ class PBVSController:
             self.rtde_c.speedStop()
             self.rtde_c.stopScript()
             print(f"\n控制结束")
-            self._close_csv()
             if self.cfg.enable_final_plots:
                 self.plot_error_history()
                 self.plot_trajectory_figure()
