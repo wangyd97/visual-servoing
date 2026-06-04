@@ -245,7 +245,7 @@ class PBVSController:
         elif "PSMC" in mode:
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
-            b = np.zeros(6)  # temporarily disable using b for control, since it's noisy
+            # b = np.zeros(6)  # temporarily disable using b for control, since it's noisy
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,

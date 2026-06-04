@@ -63,9 +63,9 @@ def method_params(method: str) -> dict:
         ),
         "P": dict(
             controller_mode="SOPDPSMC",
-            kp=[100.0] * 6,
-            kd=[8.0] * 6,
-            proxy_H=[0.7, 0.7, 0.7, 0.7, 0.7, 0.7],
+            kp=[200.0] * 6,
+            kd=[2.0] * 6,
+            proxy_H=[0.4, 0.4, 0.4, 0.4, 0.4, 0.4],
             accel_limit_pos=[5.0, 5.0, 5.0],
             accel_limit_rot=[20.0, 20.0, 20.0],
             max_linear_vel=float("inf"),
