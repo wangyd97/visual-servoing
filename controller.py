@@ -29,7 +29,7 @@ class PBVSController:
         self.e_T_c = hand_eye_calib
         self.R_etc = self.e_T_c[0:3, 0:3]
         self.p_etc = self.e_T_c[:3, 3]
-        self.rtde_freq = 60.0
+        self.rtde_freq = 150.0
         self.dt = 1.0 / self.rtde_freq
 
         self.rtde_c = RTDEControl(robot_ip, self.rtde_freq)
