@@ -24,7 +24,7 @@ STATUS_PRINT_INTERVAL = 30
 APRILTAG_NTHREADS = 2
 APRILTAG_QUAD_DECIMATE = 2.0
 
-ROBOT_IP = "10.31.17.25"
+ROBOT_IP = "10.31.17.57"
 
 
 def hand_eye_matrix() -> np.ndarray:
@@ -41,8 +41,8 @@ def method_params(method: str) -> dict:
     presets = {
         "R1": dict(
             controller_mode="SOPD",
-            kp=[25.0, 25.0, 25.0, 25.0, 25.0, 25.0],
-            kd=[12.0, 12.0, 12.0, 12.0, 12.0, 12.0],
+            kp=[16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
+            kd=[9.0, 9.0, 9.0, 9.0, 9.0, 9.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),

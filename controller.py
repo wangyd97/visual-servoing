@@ -70,6 +70,7 @@ class PBVSController:
         self._last_R_base_cam: Optional[np.ndarray] = None
         self._last_s_for_diff: Optional[np.ndarray] = None
         self._last_s_diff_time: Optional[float] = None
+        self._s_dot_diff_filtered = np.zeros(6)
         self._u_o_filtered = np.zeros(6)
         self._last_u_o_for_diff: Optional[np.ndarray] = None
         self._last_u_o_diff_time: Optional[float] = None
@@ -98,6 +99,7 @@ class PBVSController:
         self._last_R_base_cam = None
         self._last_s_for_diff = None
         self._last_s_diff_time = None
+        self._s_dot_diff_filtered = np.zeros(6)
         self._u_o_filtered = np.zeros(6)
         self._last_u_o_for_diff = None
         self._last_u_o_diff_time = None
@@ -125,7 +127,10 @@ class PBVSController:
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
         s = np.concatenate([c_p_oc, q_oc[:3]])
         L = compute_L(c_p_oc, q_oc, R_base_cam)
-
+        print(f"R_base_cam:\n{R_base_cam}")
+        print(f"q_oc:\n{(q_oc)}") 
+        print(f"q_oc:\n{(Rotation.from_quat(q_oc).as_euler('xyz', degrees=True))}") # tranform to euler angles for better interpretability
+        print(f"L:\n{L}")
         try:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
@@ -134,17 +139,23 @@ class PBVSController:
         return s, s_d, q_oc, c_p_oc, L, L_inv
 
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
-        """Eq. (42a): obtain s_dot from visual-feature difference."""
+        """Eq. (42a): obtain s_dot from filtered visual-feature difference."""
         s = np.asarray(s, dtype=float).reshape(6)
         now = time.perf_counter()
         if self._last_s_for_diff is None or self._last_s_diff_time is None:
-            s_dot = np.zeros(6)
+            self._s_dot_diff_filtered = np.zeros(6)
         else:
             dt = max(now - self._last_s_diff_time, 1e-4)
-            s_dot = (s - self._last_s_for_diff) / dt
+            s_dot_raw = (s - self._last_s_for_diff) / dt
+            tau = 0.02
+            beta = tau / (tau + dt)
+            self._s_dot_diff_filtered = (
+                beta * self._s_dot_diff_filtered
+                + (1.0 - beta) * s_dot_raw
+            )
         self._last_s_for_diff = s.copy()
         self._last_s_diff_time = now
-        return s_dot.copy()
+        return self._s_dot_diff_filtered.copy()
 
     def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
         u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
@@ -224,7 +235,7 @@ class PBVSController:
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
-        # u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
+        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -299,6 +310,7 @@ class PBVSController:
         if T_cur is None:
             self._last_u_c = np.zeros(6)
             self._last_s_for_diff = None
+            self._s_dot_diff_filtered = np.zeros(6)
             self._frame_idx += 1
             return None, None, False, None, None, None
 
@@ -381,7 +393,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
-    def run(self, pipeline, init_pose, move_acc: float = 6.0):
+    def run(self, pipeline, init_pose, move_acc: float = 10.0):
         if not self.targets:
             print("❌ 未设置目标")
             return
@@ -553,13 +565,6 @@ class PBVSController:
                 mid = ((proxy_center_px + cur_c) // 2).tolist()
                 cv2.putText(vis, f"|proxy_b|={proxy_bn:.3f}", (mid[0]+5, mid[1]),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 128), 1, cv2.LINE_AA)
-
-        if v_cmd is not None:
-            cv2.arrowedLine(vis, (w_img//2, h_img//2),
-                            (int(w_img//2 + v_cmd[0]*500), int(h_img//2 + v_cmd[1]*500)),
-                            (0, 255, 255), 3, tipLength=0.3)
-            cv2.putText(vis, f"Vel:{np.linalg.norm(v_cmd[:3])*1000:.1f}mm/s",
-                        (10, h_img-20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
 
         cv2.putText(vis, f"[{mode}] {self.cur_target.name if self.cur_target else ''}",
                     (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
