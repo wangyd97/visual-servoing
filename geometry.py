@@ -30,8 +30,8 @@ def get_tag_3d_corners(tag_size: float, T_tag: np.ndarray) -> np.ndarray:
 
 
 def compute_c_Q_oc(c_q_oc: np.ndarray) -> np.ndarray:
-    """Quaternion matrix c_Q_oc used in Eqs. (20) and (21), q=[qx,qy,qz,qw]."""
-    q0, qv = c_q_oc[3], c_q_oc[:3]
+    """Quaternion matrix c_Q_oc used in Eqs. (20) and (21), q=[qw,qx,qy,qz]."""
+    q0, qv = c_q_oc[0], c_q_oc[1:4]
     return q0 * np.eye(3) - skew(qv)
 
 
@@ -77,6 +77,6 @@ def compute_b(c_p_oc: np.ndarray, c_q_oc: np.ndarray,
         ])
         + np.concatenate([
             skew(omega_c_cam) @ skew(omega_c_cam) @ c_p_oc,
-            -0.25 * float(omega_rel_base @ omega_rel_base) * c_q_oc[:3],
+            -0.25 * float(omega_rel_base @ omega_rel_base) * c_q_oc[1:4],
         ])
     )

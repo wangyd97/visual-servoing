@@ -34,6 +34,31 @@ class PSMCPDProxy:
         clipped[3:] = self._clip_3d(u_dot_c[3:], float(self.A[3]))
         return clipped
 
+    @staticmethod
+    def _quat_from_qv(qv: np.ndarray) -> np.ndarray:
+        """Build q=[qw,qx,qy,qz] from its vector part."""
+        qv = np.asarray(qv, dtype=float).reshape(3).copy()
+        qv_norm_sq = float(qv @ qv)
+        if qv_norm_sq > 1.0:
+            qv /= np.sqrt(qv_norm_sq + 1e-12)
+            qv_norm_sq = float(qv @ qv)
+        qw = np.sqrt(max(0.0, 1.0 - qv_norm_sq))
+        return np.array([qw, qv[0], qv[1], qv[2]], dtype=float)
+
+    @classmethod
+    def _nearer_quat_vector(cls, qv_ref: np.ndarray, qv: np.ndarray) -> np.ndarray:
+        q_ref = cls._quat_from_qv(qv_ref)
+        q = cls._quat_from_qv(qv)
+        if float(q_ref @ q) < 0.0:
+            q = -q
+        return q[1:4].copy()
+
+    @classmethod
+    def _make_rotation_feature_nearer(cls, s_ref: np.ndarray, s: np.ndarray) -> np.ndarray:
+        out = np.asarray(s, dtype=float).reshape(-1).copy()
+        out[3:6] = cls._nearer_quat_vector(s_ref[3:6], out[3:6])
+        return out
+
     def reset(self):
         self.s_p_prv[:] = 0.0
         self.s_p_star[:] = 0.0
@@ -60,6 +85,11 @@ class PSMCPDProxy:
         self.s_p_star = (
             s_d + self.H * s_dot_d + (self.H / T) * self.s_p_prv
         ) / (1.0 + self.H / T)
+        # Eq. (42i): choose quaternion sign closer to s_p,prv.
+        self.s_p_star = self._make_rotation_feature_nearer(
+            self.s_p_prv,
+            self.s_p_star,
+        )
 
         # Eq. (42j): alpha_c* = (K + B/T)s_p* - Ks - B(s_dot + s_p,prv/T).
         self.alpha_c_star = (
@@ -82,6 +112,11 @@ class PSMCPDProxy:
         self.s_p = self.s_p_star + np.linalg.solve(
             K + B / T,
             self.alpha_c - self.alpha_c_star,
+        )
+        # Eq. (42n): choose quaternion sign closer to s_p*.
+        self.s_p = self._make_rotation_feature_nearer(
+            self.s_p_star,
+            self.s_p,
         )
         self.s_p_prv = self.s_p.copy()
         return self.u_dot_c

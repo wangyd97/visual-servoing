@@ -76,6 +76,11 @@ class PBVSController:
         self._last_u_o_diff_time: Optional[float] = None
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
+        self._last_c_q_oc: Optional[np.ndarray] = None
+        self._s_pred_from_v_ctrl: Optional[np.ndarray] = None
+        self._s_detected_for_debug = np.full(6, np.nan)
+        self._s_pred_for_debug = np.full(6, np.nan)
+        self._s_pred_error_for_debug = np.full(6, np.nan)
 
     def set_targets(self, targets: List[TargetPose]):
         self.targets = targets
@@ -105,7 +110,12 @@ class PBVSController:
         self._last_u_o_diff_time = None
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
+        self._last_c_q_oc = None
         self._last_accel_saturated = False
+        self._s_pred_from_v_ctrl = None
+        self._s_detected_for_debug = np.full(6, np.nan)
+        self._s_pred_for_debug = np.full(6, np.nan)
+        self._s_pred_error_for_debug = np.full(6, np.nan)
 
     def _desired_T(self) -> np.ndarray:
         if self._active_T_des is not None:
@@ -114,23 +124,47 @@ class PBVSController:
             return self.cur_target.T_des
         return np.eye(4)
 
+    @staticmethod
+    def _nearer_quat(q_ref: np.ndarray, q: np.ndarray) -> np.ndarray:
+        q_ref = np.asarray(q_ref, dtype=float).reshape(4)
+        q = np.asarray(q, dtype=float).reshape(4).copy()
+        if float(q_ref @ q) < 0.0:
+            q = -q
+        return q
+
+    @staticmethod
+    def _quat_xyzw_to_wxyz(q_xyzw: np.ndarray) -> np.ndarray:
+        q_xyzw = np.asarray(q_xyzw, dtype=float).reshape(4)
+        return np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], dtype=float)
+
+    @staticmethod
+    def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
+        q_wxyz = np.asarray(q_wxyz, dtype=float).reshape(4)
+        return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
+
+    def _make_c_q_oc_continuous(self, c_q_oc: np.ndarray, update: bool = True) -> np.ndarray:
+        c_q_oc = np.asarray(c_q_oc, dtype=float).reshape(4).copy()
+        if self._last_c_q_oc is not None:
+            c_q_oc = self._nearer_quat(self._last_c_q_oc, c_q_oc)
+        if update:
+            self._last_c_q_oc = c_q_oc.copy()
+        return c_q_oc
+
     def _compute_feature_error(self, T_current: np.ndarray,
                                R_base_cam: np.ndarray):
         T_des = self._desired_T()
-        q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
-        c_q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
-        if q_des[3] < 0:
-            q_des = -q_des
-        if np.dot(c_q_oc, q_des) < 0:
-            c_q_oc = -c_q_oc
+        q_des = self._quat_xyzw_to_wxyz(Rotation.from_matrix(T_des[:3, :3]).as_quat())
+        c_q_oc = self._quat_xyzw_to_wxyz(Rotation.from_matrix(T_current[:3, :3]).as_quat())
+        c_q_oc = self._make_c_q_oc_continuous(c_q_oc)
+        print(f"c_q_oc (quat): {c_q_oc}")
         c_p_oc = T_current[:3, 3]
-        s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
-        s = np.concatenate([c_p_oc, c_q_oc[:3]])
-        print(f"s: {s}")
+        s_d = np.concatenate([T_des[:3, 3], q_des[1:4]])
+        s = np.concatenate([c_p_oc, c_q_oc[1:4]])
+        # print(f"s: {s}")
         L = compute_L(c_p_oc, c_q_oc, R_base_cam)
         # print(f"R_base_cam:\n{R_base_cam}")
         # print(f"c_q_oc:\n{(c_q_oc)}") 
-        # print(f"c_q_oc:\n{(Rotation.from_quat(c_q_oc).as_euler('xyz', degrees=True))}") # tranform to euler angles for better interpretability
+        # print(f"c_q_oc:\n{(Rotation.from_quat(self._quat_wxyz_to_xyzw(c_q_oc)).as_euler('xyz', degrees=True))}") # tranform to euler angles for better interpretability
         # print(f"L:\n{L}")
         try:
             L_inv = np.linalg.inv(L)
@@ -205,9 +239,9 @@ class PBVSController:
                 qv_proxy = qv_proxy / np.sqrt(qv_ns + 1e-12)
                 qv_ns = np.dot(qv_proxy, qv_proxy)
             q0_proxy = np.sqrt(max(0.0, 1.0 - qv_ns))
-            q_s = np.array([qv_proxy[0], qv_proxy[1], qv_proxy[2], q0_proxy])
+            q_s = np.array([q0_proxy, qv_proxy[0], qv_proxy[1], qv_proxy[2]])
             T_err_proxy = np.eye(4)
-            T_err_proxy[:3, :3] = Rotation.from_quat(q_s).as_matrix()
+            T_err_proxy[:3, :3] = Rotation.from_quat(self._quat_wxyz_to_xyzw(q_s)).as_matrix()
             T_err_proxy[:3, 3] = t_proxy
             T_proxy_cam = inv_T(T_err_proxy) @ self._desired_T()
             return T_proxy_cam if T_proxy_cam[2, 3] > 0 else None
@@ -236,7 +270,7 @@ class PBVSController:
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
-        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
+        # u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -291,6 +325,52 @@ class PBVSController:
 
         return np.concatenate([v_tcp_base, omega_base])
 
+    def _tcp_twist_base_to_u_c(self, v_ctrl: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
+        R_base_tcp = R.from_rotvec(tcp_pose[3:]).as_matrix()
+        p_base_ec = R_base_tcp @ self.p_etc
+
+        v_tcp_base = v_ctrl[:3]
+        omega_base = v_ctrl[3:]
+        v_c_base = v_tcp_base + np.cross(omega_base, p_base_ec)
+
+        return np.concatenate([v_c_base, omega_base])
+
+    def _debug_print_s_from_v_ctrl(self, T_current: np.ndarray,
+                                   R_base_cam: np.ndarray,
+                                   v_ctrl: np.ndarray,
+                                   tcp_pose: np.ndarray):
+        c_q_oc = self._quat_xyzw_to_wxyz(Rotation.from_matrix(T_current[:3, :3]).as_quat())
+        c_q_oc = self._make_c_q_oc_continuous(c_q_oc, update=False)
+        c_p_oc = T_current[:3, 3]
+        s_detected = np.concatenate([c_p_oc, c_q_oc[1:4]])
+        if self._s_pred_from_v_ctrl is None:
+            self._s_pred_from_v_ctrl = s_detected.copy()
+
+        c_p_oc_pred = self._s_pred_from_v_ctrl[:3]
+        c_qv_oc_pred = self._s_pred_from_v_ctrl[3:6]
+        qv_norm_sq = float(c_qv_oc_pred @ c_qv_oc_pred)
+        if qv_norm_sq > 1.0:
+            c_qv_oc_pred = c_qv_oc_pred / np.sqrt(qv_norm_sq + 1e-12)
+            qv_norm_sq = float(c_qv_oc_pred @ c_qv_oc_pred)
+            self._s_pred_from_v_ctrl[3:6] = c_qv_oc_pred
+        c_q0_oc_pred = np.sqrt(max(0.0, 1.0 - qv_norm_sq))
+        c_q_oc_pred = np.concatenate([[c_q0_oc_pred], c_qv_oc_pred])
+
+        L = compute_L(c_p_oc_pred, c_q_oc_pred, R_base_cam)
+        N = compute_N(c_q_oc_pred, R_base_cam)
+        u_c_from_v_ctrl = self._tcp_twist_base_to_u_c(v_ctrl, tcp_pose)
+        u_o = self._last_u_o.copy()
+        s_dot_pred = L @ u_c_from_v_ctrl #+ N @ u_o
+        s_next_pred = self._s_pred_from_v_ctrl + self.dt * s_dot_pred
+        self._s_pred_from_v_ctrl = s_next_pred.copy()
+        self._s_detected_for_debug = s_detected.copy()
+        self._s_pred_for_debug = s_next_pred.copy()
+        self._s_pred_error_for_debug = s_next_pred - s_detected
+
+        print(f"s_detected: {s_detected}")
+        # print(f"s_dot_pred_from_v_ctrl: {s_dot_pred}")
+        print(f"s_next_pred_from_v_ctrl: {s_next_pred}")
+
     def _detect_or_reuse_tag(self, gray_img):
         should_detect = (
             self._last_detection is None
@@ -312,6 +392,8 @@ class PBVSController:
             self._last_u_c = np.zeros(6)
             self._last_s_for_diff = None
             self._s_dot_diff_filtered = np.zeros(6)
+            self._last_c_q_oc = None
+            self._s_pred_from_v_ctrl = None
             self._frame_idx += 1
             return None, None, False, None, None, None
 
@@ -324,7 +406,6 @@ class PBVSController:
         self._last_R_base_cam = R_base_cam.copy()
 
         u_c, u_dot_c = self._compute_control(T_cur, R_base_cam)
-
         self._last_u_c = u_c.copy()
 
         T_err = self._desired_T() @ inv_T(T_cur)
@@ -340,7 +421,8 @@ class PBVSController:
             self._proxy_T_cam = self._proxy_feature_to_T_cam(self._psmc.proxy_position)
 
         v_ctrl = self._u_c_to_tcp_twist_base(u_c, actual_pose)
-        v_ctrl = np.array([-0.005, 0,-0.005,0,0,0.005])
+        # v_ctrl = np.array([0.005, 0, 0, 0, 0, 0])  # temporarily disable motion for better debugging
+        self._debug_print_s_from_v_ctrl(T_cur, R_base_cam, v_ctrl, actual_pose)
         converged_now = (err_pos < self.cfg.pos_threshold
                          and err_rot < self.cfg.rot_threshold)
         if converged_now:
@@ -369,6 +451,15 @@ class PBVSController:
                 "rx": float(r_euler[0]), "ry": float(r_euler[1]), "rz": float(r_euler[2]),
                 "udotc0": float(u_dot_c[0]), "udotc1": float(u_dot_c[1]), "udotc2": float(u_dot_c[2]),
                 "udotc3": float(u_dot_c[3]), "udotc4": float(u_dot_c[4]), "udotc5": float(u_dot_c[5]),
+                "sdet0": float(self._s_detected_for_debug[0]), "sdet1": float(self._s_detected_for_debug[1]),
+                "sdet2": float(self._s_detected_for_debug[2]), "sdet3": float(self._s_detected_for_debug[3]),
+                "sdet4": float(self._s_detected_for_debug[4]), "sdet5": float(self._s_detected_for_debug[5]),
+                "spred0": float(self._s_pred_for_debug[0]), "spred1": float(self._s_pred_for_debug[1]),
+                "spred2": float(self._s_pred_for_debug[2]), "spred3": float(self._s_pred_for_debug[3]),
+                "spred4": float(self._s_pred_for_debug[4]), "spred5": float(self._s_pred_for_debug[5]),
+                "serr0": float(self._s_pred_error_for_debug[0]), "serr1": float(self._s_pred_error_for_debug[1]),
+                "serr2": float(self._s_pred_error_for_debug[2]), "serr3": float(self._s_pred_error_for_debug[3]),
+                "serr4": float(self._s_pred_error_for_debug[4]), "serr5": float(self._s_pred_error_for_debug[5]),
                 "target": self.cur_target.name,
                 "cx0": float(corners[0,0]), "cy0": float(corners[0,1]),
                 "cx1": float(corners[1,0]), "cy1": float(corners[1,1]),
@@ -394,6 +485,10 @@ class PBVSController:
     def plot_trajectory_figure(self):
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
+
+    def plot_s_prediction_error(self):
+        from .plotting import plot_s_prediction_error
+        return plot_s_prediction_error(self)
 
     def run(self, pipeline, init_pose, move_acc: float = 10.0):
         if not self.targets:
@@ -472,6 +567,7 @@ class PBVSController:
             if self.cfg.enable_final_plots:
                 self.plot_error_history()
                 self.plot_trajectory_figure()
+                self.plot_s_prediction_error()
 
     def _visualize(self, img, corners, v_cmd, R_cur, t_cur):
         vis = img.copy()
