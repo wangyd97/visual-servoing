@@ -118,25 +118,26 @@ class PBVSController:
                                R_base_cam: np.ndarray):
         T_des = self._desired_T()
         q_des = Rotation.from_matrix(T_des[:3, :3]).as_quat()
-        q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
+        c_q_oc = Rotation.from_matrix(T_current[:3, :3]).as_quat()
         if q_des[3] < 0:
             q_des = -q_des
-        if np.dot(q_oc, q_des) < 0:
-            q_oc = -q_oc
+        if np.dot(c_q_oc, q_des) < 0:
+            c_q_oc = -c_q_oc
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[:3]])
-        s = np.concatenate([c_p_oc, q_oc[:3]])
-        L = compute_L(c_p_oc, q_oc, R_base_cam)
-        print(f"R_base_cam:\n{R_base_cam}")
-        print(f"q_oc:\n{(q_oc)}") 
-        print(f"q_oc:\n{(Rotation.from_quat(q_oc).as_euler('xyz', degrees=True))}") # tranform to euler angles for better interpretability
-        print(f"L:\n{L}")
+        s = np.concatenate([c_p_oc, c_q_oc[:3]])
+        print(f"s: {s}")
+        L = compute_L(c_p_oc, c_q_oc, R_base_cam)
+        # print(f"R_base_cam:\n{R_base_cam}")
+        # print(f"c_q_oc:\n{(c_q_oc)}") 
+        # print(f"c_q_oc:\n{(Rotation.from_quat(c_q_oc).as_euler('xyz', degrees=True))}") # tranform to euler angles for better interpretability
+        # print(f"L:\n{L}")
         try:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
             L_inv = np.linalg.pinv(L)
 
-        return s, s_d, q_oc, c_p_oc, L, L_inv
+        return s, s_d, c_q_oc, c_p_oc, L, L_inv
 
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
         """Eq. (42a): obtain s_dot from filtered visual-feature difference."""
@@ -186,13 +187,13 @@ class PBVSController:
         self._last_u_o_diff_time = now
         return self._u_dot_o_filtered.copy()
 
-    def _compute_u_dot_c(self, alpha_c: np.ndarray, q_oc: np.ndarray,
+    def _compute_u_dot_c(self, alpha_c: np.ndarray, c_q_oc: np.ndarray,
                   c_p_oc: np.ndarray, L: np.ndarray,
                   L_inv: np.ndarray, u_c: np.ndarray,
                   u_o: np.ndarray, u_dot_o: np.ndarray,
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
-        b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+        b = compute_b(c_p_oc, c_q_oc, u_c, u_o, R_base_cam)
         return L_inv @ (alpha_c - b - N @ u_dot_o)
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
@@ -219,14 +220,14 @@ class PBVSController:
         if s_dot_d is None:
             s_dot_d = np.zeros(6)
 
-        s, s_d, q_oc, c_p_oc, L, L_inv = self._compute_feature_error(
+        s, s_d, c_q_oc, c_p_oc, L, L_inv = self._compute_feature_error(
             T_current, R_base_cam
         )
         
         e = s_d - s
         u_c = self._last_u_c.copy()
         
-        N = compute_N(q_oc, R_base_cam)
+        N = compute_N(c_q_oc, R_base_cam)
         try:
             N_inv = np.linalg.inv(N)
         except np.linalg.LinAlgError:
@@ -249,13 +250,13 @@ class PBVSController:
             alpha_c = K @ e + B @ edot
             # Eq. (25): u_dot_c = L^-1(alpha_c - b - N u_dot_o).
             u_dot_c = self._compute_u_dot_c(
-                alpha_c, q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
+                alpha_c, c_q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
             )
             self._last_accel_saturated = False
 
         elif "PSMC" in mode:
             # Eq. (42h): b = b(s, qc, uc, uo).
-            b = compute_b(c_p_oc, q_oc, u_c, u_o, R_base_cam)
+            b = compute_b(c_p_oc, c_q_oc, u_c, u_o, R_base_cam)
             # b = np.zeros(6)  # temporarily disable using b for control, since it's noisy
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
@@ -339,6 +340,7 @@ class PBVSController:
             self._proxy_T_cam = self._proxy_feature_to_T_cam(self._psmc.proxy_position)
 
         v_ctrl = self._u_c_to_tcp_twist_base(u_c, actual_pose)
+        v_ctrl = np.array([-0.005, 0,-0.005,0,0,0.005])
         converged_now = (err_pos < self.cfg.pos_threshold
                          and err_rot < self.cfg.rot_threshold)
         if converged_now:

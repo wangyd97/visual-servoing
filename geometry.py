@@ -29,34 +29,34 @@ def get_tag_3d_corners(tag_size: float, T_tag: np.ndarray) -> np.ndarray:
     return (T_tag @ ch.T).T[:, :3]
 
 
-def compute_c_Q_oc(q_oc: np.ndarray) -> np.ndarray:
+def compute_c_Q_oc(c_q_oc: np.ndarray) -> np.ndarray:
     """Quaternion matrix c_Q_oc used in Eqs. (20) and (21), q=[qx,qy,qz,qw]."""
-    q0, qv = q_oc[3], q_oc[:3]
+    q0, qv = c_q_oc[3], c_q_oc[:3]
     return q0 * np.eye(3) - skew(qv)
 
 
-def compute_L(c_p_oc: np.ndarray, q_oc: np.ndarray,
+def compute_L(c_p_oc: np.ndarray, c_q_oc: np.ndarray,
               R_base_cam: np.ndarray) -> np.ndarray:
     """Eq. (20): L(s,qc), input is base-frame camera twist uc."""
     Rt = R_base_cam.T
-    c_Q_oc = compute_c_Q_oc(q_oc)
+    c_Q_oc = compute_c_Q_oc(c_q_oc)
     return np.block([
         [-Rt,       skew(c_p_oc) @ Rt],
         [np.zeros((3, 3)), -0.5 * c_Q_oc @ Rt]
     ])
 
 
-def compute_N(q_oc: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
+def compute_N(c_q_oc: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
     """Eq. (21): N(s,qc), input is base-frame object twist uo."""
     Rt = R_base_cam.T
-    c_Q_oc = compute_c_Q_oc(q_oc)
+    c_Q_oc = compute_c_Q_oc(c_q_oc)
     return np.block([
         [Rt, np.zeros((3, 3))],
         [np.zeros((3, 3)), 0.5 * c_Q_oc @ Rt],
     ])
 
 
-def compute_b(c_p_oc: np.ndarray, q_oc: np.ndarray,
+def compute_b(c_p_oc: np.ndarray, c_q_oc: np.ndarray,
               u_c: np.ndarray, u_o: np.ndarray,
               R_base_cam: np.ndarray) -> np.ndarray:
     """Eq. (23): b(s,qc,uc,uo), with uc and uo expressed in base frame."""
@@ -66,10 +66,10 @@ def compute_b(c_p_oc: np.ndarray, q_oc: np.ndarray,
     omega_o_base = u_o[3:]
     omega_c_cam = R_base_cam.T @ omega_c_base
     omega_rel_base = omega_o_base - omega_c_base
-    N = compute_N(q_oc, R_base_cam)
+    N = compute_N(c_q_oc, R_base_cam)
     # Eq. (23): b = N[2(vo-vc)x omega_c, omega_o x omega_c]^T
     #              + [[Rc.T omega_c x]^2 c_p_oc,
-    #                 -||omega_o-omega_c||^2 q_oc / 4]^T.
+    #                 -||omega_o-omega_c||^2 c_q_oc / 4]^T.
     return (
         N @ np.concatenate([
             2.0 * np.cross(v_o_base - v_c_base, omega_c_base),
@@ -77,6 +77,6 @@ def compute_b(c_p_oc: np.ndarray, q_oc: np.ndarray,
         ])
         + np.concatenate([
             skew(omega_c_cam) @ skew(omega_c_cam) @ c_p_oc,
-            -0.25 * float(omega_rel_base @ omega_rel_base) * q_oc[:3],
+            -0.25 * float(omega_rel_base @ omega_rel_base) * c_q_oc[:3],
         ])
     )
