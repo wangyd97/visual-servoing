@@ -11,7 +11,7 @@ def sinc(x: float) -> float:
 
 
 def normalize_quat(q: np.ndarray) -> np.ndarray:
-    """Normalize a paper-order quaternion q=[w,x,y,z]."""
+    """Normalize quaternion q=[w,x,y,z]."""
     q = np.asarray(q, dtype=float).reshape(4).copy()
     norm = float(np.linalg.norm(q))
     if norm <= 0.0:
@@ -26,7 +26,7 @@ def quat_inv(q: np.ndarray) -> np.ndarray:
 
 
 def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Quaternion product a*b for paper-order quaternions q=[w,x,y,z]."""
+    """Quaternion product a*b, q=[w,x,y,z]."""
     aw, ax, ay, az = normalize_quat(a)
     bw, bx, by, bz = normalize_quat(b)
     return np.array([
@@ -45,7 +45,7 @@ def quat_nearer(q_ref: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 
 def quat_from_rotvec(rotvec: np.ndarray) -> np.ndarray:
-    """Build q=[w,x,y,z] from a rotation vector using professor-style sinc."""
+    """Build unit quaternion q=[w,x,y,z] from a rotation vector."""
     rotvec = np.asarray(rotvec, dtype=float).reshape(3)
     half_theta = 0.5 * float(np.linalg.norm(rotvec))
     q = np.array([
@@ -80,7 +80,7 @@ def rotvec_from_matrix(R: np.ndarray) -> np.ndarray:
 
 
 def quat_from_matrix(R: np.ndarray) -> np.ndarray:
-    """Return paper-order unit quaternion q=[w,x,y,z]."""
+    """Unit quaternion q=[w,x,y,z]."""
     R = np.asarray(R, dtype=float).reshape(3, 3)
     tr = float(np.trace(R))
     if tr > 0.0:
@@ -112,7 +112,7 @@ def quat_from_matrix(R: np.ndarray) -> np.ndarray:
 
 
 def matrix_from_quat(q: np.ndarray) -> np.ndarray:
-    """Build rotation matrix from paper-order quaternion q=[w,x,y,z]."""
+    """Rotation matrix from quaternion q=[w,x,y,z]."""
     q = normalize_quat(q)
     w, x, y, z = q
     return np.array([
