@@ -32,8 +32,10 @@ class PBVSController:
                  config: PBVSConfig = None):
         self.cfg = config or PBVSConfig()
         self.e_T_c = hand_eye_calib
-        self.R_etc = self.e_T_c[0:3, 0:3]
-        self.p_etc = self.e_T_c[:3, 3]
+        self.e_R_c = self.e_T_c[0:3, 0:3]
+        # e_T_c contains e_p_ce = p_c - p_e expressed in frame e.
+        # Use p_ec = p_e - p_c to match the manuscript convention.
+        self.e_p_ec = -self.e_T_c[:3, 3]
         self.rtde_freq = 60.0
         self.dt = 1.0 / self.rtde_freq
 
@@ -256,7 +258,7 @@ class PBVSController:
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
+        u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
         u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
@@ -303,12 +305,12 @@ class PBVSController:
 
     def _u_c_to_tcp_twist_base(self, u_c: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
         R_base_tcp = matrix_from_rotvec(tcp_pose[3:])
-        p_base_ec = R_base_tcp @ self.p_etc
+        b_p_ec = R_base_tcp @ self.e_p_ec
 
         v_c_base = u_c[:3]
         omega_base = u_c[3:]
 
-        v_tcp_base = v_c_base - np.cross(omega_base, p_base_ec)
+        v_tcp_base = v_c_base + np.cross(omega_base, b_p_ec)
 
         return np.concatenate([v_tcp_base, omega_base])
 
@@ -342,7 +344,7 @@ class PBVSController:
         else:
             actual_pose = np.asarray(tcp_pose, dtype=float)
         R_base_tcp = matrix_from_rotvec(actual_pose[3:])
-        R_base_cam = R_base_tcp @ self.R_etc
+        R_base_cam = R_base_tcp @ self.e_R_c
         self._last_R_base_cam = R_base_cam.copy()
 
         u_c, u_dot_c = self._compute_control(T_cur, R_base_cam)

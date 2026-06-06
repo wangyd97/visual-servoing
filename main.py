@@ -29,6 +29,8 @@ ROBOT_IP = "10.31.17.57"
 
 
 def hand_eye_matrix() -> np.ndarray:
+    # e_T_c describes the camera frame expressed in the end-effector frame.
+    # Its translation is e_p_ce = p_c - p_e, expressed in frame e.
     return np.array([
         [0.0074, -0.9994, -0.0329, -0.0715],
         [1.0000,  0.0074, -0.0010, -0.0328],
@@ -64,11 +66,11 @@ def method_params(method: str) -> dict:
         ),
         "P": dict(
             controller_mode="SOPDPSMC",
-            kp=[80.0, 80.0, 80.0, 80.0, 80.0, 80.0],
+            kp=[30.0, 30.0, 30.0, 30.0, 30.0, 30.0],
             kd=[5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
             proxy_H=[0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
-            accel_limit_pos=[10.0, 10.0, 10.0],
-            accel_limit_rot=[20.0, 20.0, 20.0],
+            accel_limit_pos=[9999, 9999, 9999],
+            accel_limit_rot=[9999, 9999, 9999],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),

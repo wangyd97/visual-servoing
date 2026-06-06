@@ -72,6 +72,7 @@ class PSMCPDProxy:
     def compute(self, s, s_dot, s_d, s_dot_d, L, L_inv, b, N, u_dot_o):
         # K, B, H are stored as diagonal entries in the config, and used here
         # as diagonal matrices to match the notation in Eq. (42).
+        # b=np.zeros(self.n)
         K = np.diag(self.K)
         B = np.diag(self.B)
         H = np.diag(self.H)

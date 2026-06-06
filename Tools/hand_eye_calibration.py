@@ -3,12 +3,12 @@ Eye-in-Hand Extrinsic Calibration
 RealSense D435i + UR3e  (RTDE 版本)
 
 标定配置：Eye-in-Hand（相机安装在末端执行器上）
-目标：求解末端执行器坐标系 → 相机坐标系 的变换矩阵 e_T_c
+目标：求解相机坐标系在末端执行器坐标系中的位姿 e_T_c
 
 原理：AX = XB  (Tsai-Lenz 方法)
   A = 相邻两帧间 末端执行器 的相对运动  (base_T_end)
   B = 相邻两帧间 标定板     的相对运动  (camera_T_target)
-  X = 待求的手眼矩阵 e_T_c  (end-effector_T_camera)
+  X = 待求的手眼矩阵 e_T_c，其中平移项为 e_p_ce = p_c - p_e
 
 依赖安装:
   pip install pyrealsense2 opencv-python opencv-contrib-python numpy
@@ -343,7 +343,7 @@ class EyeInHandCalibration:
     def _print_result(e_T_c: np.ndarray):
         np.set_printoptions(precision=4, suppress=True)
         print("\n" + "=" * 60)
-        print("  Result:  e_T_c  (end-effector → camera, 4×4)")
+        print("  Result:  e_T_c  (camera frame expressed in end-effector frame, 4×4)")
         print("=" * 60)
         print("\n# 手眼标定矩阵")
         print("e_T_c = np.array([")
@@ -374,7 +374,7 @@ class EyeInHandCalibration:
         np.save(str(self.cfg.SAVE_DIR / "e_T_c.npy"), e_T_c)
 
         data = {
-            "description"  : "Eye-in-Hand: end-effector_T_camera (4×4 homogeneous)",
+            "description"  : "Eye-in-Hand: e_T_c, camera frame expressed in end-effector frame",
             "sensor"       : "RealSense D435i",
             "robot"        : "UR3e",
             "interface"    : "RTDE (ur_rtde)",
@@ -418,7 +418,7 @@ def demo_with_known_result():
     print("=" * 60)
 
     np.set_printoptions(precision=4, suppress=True)
-    print("\nHand-Eye Matrix (e_T_c)  end-effector → camera:")
+    print("\nHand-Eye Matrix (e_T_c), camera frame expressed in end-effector frame:")
     print(e_T_c)
 
     R = e_T_c[:3, :3]
