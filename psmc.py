@@ -78,7 +78,12 @@ class PSMCPDProxy:
         I = np.eye(self.n)
         T = self.T
         if not self._initialized:
-            self.s_p_prv = np.asarray(s, dtype=float).reshape(self.n).copy()
+            # Reset the proxy feature by the measured feature s in the first loop.
+            # This avoids starting Eq. (42i) from the zero proxy state after reset().
+            measured_s = np.asarray(s, dtype=float).reshape(self.n).copy()
+            self.s_p_prv = measured_s.copy()
+            self.s_p_star = measured_s.copy()
+            self.s_p = measured_s.copy()
             self._initialized = True
 
         # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + (H/T)s_p,prv).

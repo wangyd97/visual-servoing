@@ -1,12 +1,6 @@
 import numpy as np
 
-
-def skew(p: np.ndarray) -> np.ndarray:
-    return np.array([
-        [0,     -p[2],  p[1]],
-        [p[2],   0,    -p[0]],
-        [-p[1],  p[0],  0   ]
-    ])
+from .rotation_utils import skew
 
 
 def inv_T(T: np.ndarray) -> np.ndarray:

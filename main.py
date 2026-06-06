@@ -4,16 +4,17 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from e1.config import PBVSConfig, TargetPose
     from e1.controller import PBVSController
+    from e1.rotation_utils import matrix_from_euler_xyz
     from e1.vision import init_realsense
 else:
     from .config import PBVSConfig, TargetPose
     from .controller import PBVSController
+    from .rotation_utils import matrix_from_euler_xyz
     from .vision import init_realsense
 
 
@@ -112,16 +113,12 @@ def build_targets():
     return [
         TargetPose(
             name="Large_error_start",
-            desired_rotation=Rotation.from_euler(
-                "xyz", (0, 0, 0), degrees=True
-            ).as_matrix(),
+            desired_rotation=matrix_from_euler_xyz((0, 0, 0), degrees=True),
             desired_translation=np.array([0.00, 0.00, 0.28]),
         ),
         TargetPose(
             name="Large_error_target_2",
-            desired_rotation=Rotation.from_euler(
-                "xyz", (0, -10, 0), degrees=True
-            ).as_matrix(),
+            desired_rotation=matrix_from_euler_xyz((0, -10, 0), degrees=True),
             desired_translation=np.array([0.00, 0.02, 0.15]),
         ),
     ]
