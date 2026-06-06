@@ -9,12 +9,12 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from e1.config import PBVSConfig, TargetPose
     from e1.controller import PBVSController
-    from e1.rotation_utils import matrix_from_euler_xyz
+    from e1.rotation_utils import matrix_from_quat
     from e1.vision import init_realsense
 else:
     from .config import PBVSConfig, TargetPose
     from .controller import PBVSController
-    from .rotation_utils import matrix_from_euler_xyz
+    from .rotation_utils import matrix_from_quat
     from .vision import init_realsense
 
 
@@ -43,7 +43,7 @@ def method_params(method: str) -> dict:
         "R1": dict(
             controller_mode="SOPD",
             kp=[16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
-            kd=[9.0, 9.0, 9.0, 9.0, 9.0, 9.0],
+            kd=[10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -110,16 +110,12 @@ def build_config(method: str, runtime: float) -> PBVSConfig:
 
 
 def build_targets():
+    desired_quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # q=[qw,qx,qy,qz]
     return [
         TargetPose(
             name="Large_error_start",
-            desired_rotation=matrix_from_euler_xyz((0, 0, 0), degrees=True),
+            desired_rotation=matrix_from_quat(desired_quaternion),
             desired_translation=np.array([0.00, 0.00, 0.28]),
-        ),
-        TargetPose(
-            name="Large_error_target_2",
-            desired_rotation=matrix_from_euler_xyz((0, -10, 0), degrees=True),
-            desired_translation=np.array([0.00, 0.02, 0.15]),
         ),
     ]
 

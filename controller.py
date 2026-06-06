@@ -257,7 +257,7 @@ class PBVSController:
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
-        # u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
+        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)

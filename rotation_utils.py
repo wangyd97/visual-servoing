@@ -122,20 +122,7 @@ def matrix_from_quat(q: np.ndarray) -> np.ndarray:
     ])
 
 
-def matrix_from_euler_xyz(angles, degrees: bool = False) -> np.ndarray:
-    angles = np.asarray(angles, dtype=float).reshape(3)
-    if degrees:
-        angles = np.deg2rad(angles)
-    ax, ay, az = angles
-    cx, sx = np.cos(ax), np.sin(ax)
-    cy, sy = np.cos(ay), np.sin(ay)
-    cz, sz = np.cos(az), np.sin(az)
-    Rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]])
-    Ry = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]])
-    Rz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
-    return Rz @ Ry @ Rx
-
-
+# Just for logging, not used in control
 def euler_xyz_from_matrix(R: np.ndarray, degrees: bool = False) -> np.ndarray:
     R = np.asarray(R, dtype=float).reshape(3, 3)
     sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
