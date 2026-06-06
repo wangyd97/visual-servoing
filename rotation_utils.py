@@ -1,47 +1,82 @@
 import numpy as np
 
 
-def matrix_from_rotvec(rotvec: np.ndarray) -> np.ndarray:
+def sinc(x: float) -> float:
+    """sin(x) / x with a smooth small-angle expansion."""
+    x = float(x)
+    x2 = x * x
+    if abs(x) < 1e-8:
+        return 1.0 - x2 / 6.0 + x2 * x2 / 120.0
+    return np.sin(x) / x
+
+
+def normalize_quat(q: np.ndarray) -> np.ndarray:
+    """Normalize a paper-order quaternion q=[w,x,y,z]."""
+    q = np.asarray(q, dtype=float).reshape(4).copy()
+    norm = float(np.linalg.norm(q))
+    if norm <= 0.0:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    return q / norm
+
+
+def quat_inv(q: np.ndarray) -> np.ndarray:
+    """Quaternion inverse for q=[w,x,y,z]."""
+    q = normalize_quat(q)
+    return np.array([q[0], -q[1], -q[2], -q[3]], dtype=float)
+
+
+def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Quaternion product a*b for paper-order quaternions q=[w,x,y,z]."""
+    aw, ax, ay, az = normalize_quat(a)
+    bw, bx, by, bz = normalize_quat(b)
+    return np.array([
+        aw * bw - ax * bx - ay * by - az * bz,
+        ax * bw + aw * bx - az * by + ay * bz,
+        ay * bw + az * bx + aw * by - ax * bz,
+        az * bw - ay * bx + ax * by + aw * bz,
+    ], dtype=float)
+
+
+def quat_nearer(q_ref: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Flip q if -q is closer to q_ref."""
+    q_ref = normalize_quat(q_ref)
+    q = normalize_quat(q)
+    return -q if float(q_ref @ q) < 0.0 else q
+
+
+def quat_from_rotvec(rotvec: np.ndarray) -> np.ndarray:
+    """Build q=[w,x,y,z] from a rotation vector using professor-style sinc."""
     rotvec = np.asarray(rotvec, dtype=float).reshape(3)
-    theta = float(np.linalg.norm(rotvec))
-    if theta < 1e-12:
-        return np.eye(3) + skew(rotvec)
-    axis = rotvec / theta
-    K = skew(axis)
-    return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
+    half_theta = 0.5 * float(np.linalg.norm(rotvec))
+    q = np.array([
+        np.cos(half_theta),
+        0.5 * rotvec[0] * sinc(half_theta),
+        0.5 * rotvec[1] * sinc(half_theta),
+        0.5 * rotvec[2] * sinc(half_theta),
+    ], dtype=float)
+    return normalize_quat(q)
+
+
+def quat_to_rotvec(q: np.ndarray) -> np.ndarray:
+    """Convert q=[w,x,y,z] to the shortest rotation vector."""
+    q = normalize_quat(q)
+    qv = q[1:4]
+    rx = float(np.linalg.norm(qv))
+    if rx == 0.0:
+        return np.zeros(3)
+
+    theta = 2.0 * np.arctan2(rx, q[0])
+    if theta >= np.pi:
+        theta -= 2.0 * np.pi
+    return theta * qv / rx
+
+
+def matrix_from_rotvec(rotvec: np.ndarray) -> np.ndarray:
+    return matrix_from_quat(quat_from_rotvec(rotvec))
 
 
 def rotvec_from_matrix(R: np.ndarray) -> np.ndarray:
-    R = np.asarray(R, dtype=float).reshape(3, 3)
-    cos_theta = np.clip((np.trace(R) - 1.0) * 0.5, -1.0, 1.0)
-    theta = float(np.arccos(cos_theta))
-    if theta < 1e-12:
-        return 0.5 * np.array([
-            R[2, 1] - R[1, 2],
-            R[0, 2] - R[2, 0],
-            R[1, 0] - R[0, 1],
-        ])
-    if np.pi - theta < 1e-6:
-        axis = np.empty(3)
-        axis[0] = np.sqrt(max(0.0, (R[0, 0] + 1.0) * 0.5))
-        axis[1] = np.sqrt(max(0.0, (R[1, 1] + 1.0) * 0.5))
-        axis[2] = np.sqrt(max(0.0, (R[2, 2] + 1.0) * 0.5))
-        if R[0, 1] < 0.0:
-            axis[1] = -axis[1]
-        if R[0, 2] < 0.0:
-            axis[2] = -axis[2]
-        norm = np.linalg.norm(axis)
-        if norm < 1e-12:
-            axis = np.array([1.0, 0.0, 0.0])
-        else:
-            axis /= norm
-        return theta * axis
-    axis = np.array([
-        R[2, 1] - R[1, 2],
-        R[0, 2] - R[2, 0],
-        R[1, 0] - R[0, 1],
-    ]) / (2.0 * np.sin(theta))
-    return theta * axis
+    return quat_to_rotvec(quat_from_matrix(R))
 
 
 def quat_from_matrix(R: np.ndarray) -> np.ndarray:
@@ -73,13 +108,12 @@ def quat_from_matrix(R: np.ndarray) -> np.ndarray:
         qy = (R[1, 2] + R[2, 1]) / S
         qz = 0.25 * S
     q = np.array([qw, qx, qy, qz], dtype=float)
-    return q / (np.linalg.norm(q) + 1e-12)
+    return normalize_quat(q)
 
 
 def matrix_from_quat(q: np.ndarray) -> np.ndarray:
     """Build rotation matrix from paper-order quaternion q=[w,x,y,z]."""
-    q = np.asarray(q, dtype=float).reshape(4)
-    q = q / (np.linalg.norm(q) + 1e-12)
+    q = normalize_quat(q)
     w, x, y, z = q
     return np.array([
         [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
