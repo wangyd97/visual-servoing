@@ -28,10 +28,15 @@ class PSMCPDProxy:
             return x.copy()
         return (A / max(norm, A)) * x
 
-    def _clip_camera_acceleration(self, u_dot_c: np.ndarray) -> np.ndarray:
-        clipped = np.zeros_like(u_dot_c)
-        clipped[:3] = self._clip_3d(u_dot_c[:3], float(self.A[0]))
-        clipped[3:] = self._clip_3d(u_dot_c[3:], float(self.A[3]))
+    def _clip_camera_acceleration(self, x: np.ndarray) -> np.ndarray:
+        clipped = np.zeros_like(x)
+        # clipped[:3] = self._clip_3d(u_dot_c[:3], self.A[0])
+        # clipped[3:] = self._clip_3d(u_dot_c[3:], self.A[3])
+        a = 1.0
+        for i in range(6):
+            a = min(a, self.A[i] / max(abs(x[i]),self.A[i]))
+        clipped = x * a
+
         return clipped
 
     @staticmethod
@@ -72,6 +77,7 @@ class PSMCPDProxy:
     def compute(self, s, s_dot, s_d, s_dot_d, L, L_inv, b, N, u_dot_o):
         # K, B, H are stored as diagonal entries in the config, and used here
         # as diagonal matrices to match the notation in Eq. (42).
+        LIMITING_ALPHA = False
         # b=np.zeros(self.n)
         K = np.diag(self.K)
         B = np.diag(self.B)
@@ -81,15 +87,17 @@ class PSMCPDProxy:
         if not self._initialized:
             # Reset the proxy feature by the measured feature s in the first loop.
             # This avoids starting Eq. (42i) from the zero proxy state after reset().
-            measured_s = np.asarray(s, dtype=float).reshape(self.n).copy()
+            measured_s = s.copy()
+
+            
             self.s_p_prv = measured_s.copy()
             self.s_p_star = measured_s.copy()
             self.s_p = measured_s.copy()
             self._initialized = True
 
         # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + (H/T)s_p,prv).
-        self.s_p_star = (
-            s_d + self.H * s_dot_d + (self.H / T) * self.s_p_prv
+        self.s_p_star = self.s_p_prv + (
+            s_d + self.H * s_dot_d  - self.s_p_prv
         ) / (1.0 + self.H / T)
         # Eq. (42i): choose quaternion sign closer to s_p,prv.
         self.s_p_star = self._make_rotation_feature_nearer(
@@ -103,16 +111,18 @@ class PSMCPDProxy:
             - K @ s
             - B @ (s_dot + self.s_p_prv / T)
         )
-
+        if LIMITING_ALPHA:
+            self.alpha_c = self._clip_camera_acceleration(self.alpha_c_star)
+            self.u_dot_c = L_inv @ (self.alpha_c - b - N @ u_dot_o)
+        else:
         # Eq. (42k): u_dot_c* = L^-1(alpha_c* - b - N u_dot_o).
-        self.u_dot_c_star = L_inv @ (self.alpha_c_star - b - N @ u_dot_o)
-
+            self.u_dot_c_star = L_inv @ (self.alpha_c_star - b - N @ u_dot_o)
         # Eq. (42l): u_dot_c = Pi_A(u_dot_c*).
         # Translational and rotational 3D vectors are norm-clipped separately:
         # clip(x) = A x / max(||x||, A)
-        self.u_dot_c = self._clip_camera_acceleration(self.u_dot_c_star)
+            self.u_dot_c = self._clip_camera_acceleration(self.u_dot_c_star)
         # Eq. (42m): alpha_c = alpha_c* + L(u_dot_c - u_dot_c*).
-        self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
+            self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
 
         # Eq. (42n): s_p = s_p* + (K + B/T)^-1(alpha_c - alpha_c*).
         self.s_p = self.s_p_star + np.linalg.solve(

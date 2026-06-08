@@ -25,7 +25,7 @@ STATUS_PRINT_INTERVAL = 30
 APRILTAG_NTHREADS = 2
 APRILTAG_QUAD_DECIMATE = 2.0
 
-ROBOT_IP = "10.31.17.57"
+ROBOT_IP = "10.31.17.59"
 
 
 def hand_eye_matrix() -> np.ndarray:
@@ -69,8 +69,8 @@ def method_params(method: str) -> dict:
             kp=[30.0, 30.0, 30.0, 30.0, 30.0, 30.0],
             kd=[5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
             proxy_H=[0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
-            accel_limit_pos=[9999, 9999, 9999],
-            accel_limit_rot=[9999, 9999, 9999],
+            accel_limit_pos=1 * np.array([3.0, 3.0, 3.0]),
+            accel_limit_rot=1 * np.array([5.0, 5.0, 5.0]),
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -152,7 +152,7 @@ def main():
     controller.set_targets(build_targets())
 
     init_pose = np.array([
-        -0.20588217, -0.05717437,  0.450001008,
+        -0.20588217, -0.05717437,  0.300001008,
         -2.50455863, -1.8897531,  -0.01089382,
     ])
     controller.run(pipeline, init_pose)
