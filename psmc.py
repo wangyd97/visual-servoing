@@ -11,7 +11,6 @@ class PSMCPDProxy:
         self.A = to_vec6(A, "A")
         self.H = to_vec6(H, "H")
         self.T = float(dt)
-
         self.s_p_prv = np.zeros(n)
         self.s_p_star = np.zeros(n)
         self.s_p = np.zeros(n)
@@ -36,6 +35,20 @@ class PSMCPDProxy:
         for i in range(6):
             a = min(a, self.A[i] / max(abs(x[i]),self.A[i]))
         clipped = x * a
+
+        return clipped
+    
+
+    def _clip_versa(self, x: np.ndarray, a: float, b: float) -> np.ndarray:
+        clipped = np.zeros_like(x)
+        lam = 1.0
+        lam = min(lam, a / max(abs(x[0]),a))
+        lam = min(lam, a / max(abs(x[1]),a))
+        lam = min(lam, a / max(abs(x[2]),a))
+        lam = min(lam, b / max(abs(x[3]),b))
+        lam = min(lam, b / max(abs(x[4]),b))
+        lam = min(lam, b / max(abs(x[5]),b))
+        clipped = x * lam
 
         return clipped
 
@@ -74,7 +87,7 @@ class PSMCPDProxy:
         self.u_dot_c[:] = 0.0
         self._initialized = False
 
-    def compute(self, s, s_dot, s_d, s_dot_d, L, L_inv, b, N, u_dot_o):
+    def compute(self, s, s_dot, s_d, s_dot_d, L, L_inv, b, N, u_dot_o, u_c):
         # K, B, H are stored as diagonal entries in the config, and used here
         # as diagonal matrices to match the notation in Eq. (42).
         LIMITING_ALPHA = False
@@ -121,6 +134,9 @@ class PSMCPDProxy:
         # Translational and rotational 3D vectors are norm-clipped separately:
         # clip(x) = A x / max(||x||, A)
             self.u_dot_c = self._clip_camera_acceleration(self.u_dot_c_star)
+            tmp1 =u_c + T * self.u_dot_c
+            tmp1 = self._clip_versa(tmp1,0.5,1)
+            self.u_dot_c = (tmp1 - u_c) / T
         # Eq. (42m): alpha_c = alpha_c* + L(u_dot_c - u_dot_c*).
             self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
 
