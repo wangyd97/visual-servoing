@@ -1,6 +1,6 @@
 import numpy as np
 
-from .config import to_vec6
+from .Mathematic import to_vec6
 
 
 class PSMCPDProxy:

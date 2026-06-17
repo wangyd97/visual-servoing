@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -18,7 +18,7 @@ from .geometry import (
     project_3d_to_2d,
 )
 from .psmc import PSMCPDProxy
-from .rotation_utils import (
+from .Mathematic import (
     euler_xyz_from_matrix,
     matrix_from_quat,
     matrix_from_rotvec,
@@ -163,12 +163,8 @@ class PBVSController:
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[1:4]])
         s = np.concatenate([c_p_oc, c_q_oc[1:4]])
-        # print(f"s: {s}")
         L = compute_L(c_p_oc, c_q_oc, R_base_cam)
-        # print(f"R_base_cam:\n{R_base_cam}")
-        # print(f"c_q_oc:\n{(c_q_oc)}") 
-        # print(f"c_q_oc:\n{euler_xyz_from_matrix(matrix_from_quat(c_q_oc), degrees=True)}") # tranform to euler angles for better interpretability
-        # print(f"L:\n{L}")
+
         try:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
@@ -317,8 +313,8 @@ class PBVSController:
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c)) # This part is calculated by eq. (26)
         # u_o = N_inv @ (s_dot_by_difference - L @ u_c)
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
-        u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
+        u_o = np.zeros(6)  
+        u_dot_o = np.zeros(6)  
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -592,13 +588,10 @@ class PBVSController:
         self._t0 = time.time()
         self._error_log.clear()
         self._frame_idx = 0
-        auto_switch_started = False
-        next_auto_switch_time = None
 
         try:
             while True:
                 now = time.time()
-                elapsed = now - self._t0
                 if self.cfg.max_runtime > 0 and (now - self._t0) > self.cfg.max_runtime:
                     print("\nMax runtime reached; stopping.")
                     break
@@ -644,34 +637,6 @@ class PBVSController:
                 key = cv2.waitKey(1) & 0xFF if self.cfg.enable_visualization else 0
                 if key == ord('q'):
                     break
-                elif key == ord('n'):
-                    self.rtde_c.speedStop()
-                    next_idx = (self.cur_target_idx + 1) % len(self.targets)
-                    self._switch_target(next_idx)
-                    time.sleep(0.5)
-
-                if (self.cfg.auto_switch_targets
-                        and len(self.targets) > 1
-                        and self.cur_target_idx < len(self.targets) - 1):
-                    if not auto_switch_started:
-                        if elapsed >= self.cfg.auto_switch_start_time:
-                            self.rtde_c.speedStop()
-                            self._switch_target(self.cur_target_idx + 1)
-                            auto_switch_started = True
-                            next_auto_switch_time = now + self.cfg.auto_switch_period
-                            print(
-                                f"\nFixed time {self.cfg.auto_switch_start_time:.2f}s reached; "
-                                "starting small-step target sequence"
-                            )
-                            time.sleep(0.05)
-                    elif self.cfg.auto_switch_period > 0.0:
-                        if next_auto_switch_time is None:
-                            next_auto_switch_time = now + self.cfg.auto_switch_period
-                        elif now >= next_auto_switch_time:
-                            self.rtde_c.speedStop()
-                            self._switch_target(self.cur_target_idx + 1)
-                            next_auto_switch_time = now + self.cfg.auto_switch_period
-                            time.sleep(0.05)
 
                 self.rtde_c.waitPeriod(t_start)
 

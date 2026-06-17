@@ -2,42 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
-def to_vec6(value, name: str) -> np.ndarray:
-    """
-    Convert a scalar or a length-6 list/tuple/array to an R^6 vector.
-    Scalar values are broadcast to all six components.
-    """
-    arr = np.asarray(value, dtype=float)
-    if arr.ndim == 0:
-        return np.full(6, float(arr), dtype=float)
-    arr = arr.reshape(-1)
-    if arr.size != 6:
-        raise ValueError(f"{name} must contain 6 values, got {arr.size}: {value}")
-    return arr.astype(float)
-
-
-def vec6_to_str(value, precision: int = 3) -> str:
-    """Format an R^6 parameter vector for readable output."""
-    arr = np.asarray(value, dtype=float).reshape(-1)
-    return "[" + ", ".join(f"{v:.{precision}g}" for v in arr) + "]"
-
-
-def vec6_from_pos_rot(pos_value: float, rot_value: float) -> np.ndarray:
-    """Build a 6D vector from separate position and rotation values."""
-    pos = to_vec3(pos_value, "pos_value")
-    rot = to_vec3(rot_value, "rot_value")
-    return np.concatenate([pos, rot]).astype(float)
-
-
-def to_vec3(value, name: str) -> np.ndarray:
-    arr = np.asarray(value, dtype=float)
-    if arr.ndim == 0:
-        return np.full(3, float(arr), dtype=float)
-    arr = arr.reshape(-1)
-    if arr.size != 3:
-        raise ValueError(f"{name} must contain 3 values, got {arr.size}: {value}")
-    return arr.astype(float)
+from .Mathematic import to_vec3, to_vec6, vec6_from_pos_rot
 
 
 @dataclass
@@ -56,9 +21,6 @@ class PBVSConfig:
     slow_after_convergence: bool = False
     convergence_slowdown_frames: int = 5
     convergence_velocity_scale: float = 0.1
-    auto_switch_targets: bool = False
-    auto_switch_start_time: float = 0.0
-    auto_switch_period: float = 0.0
 
     max_runtime: float = 0.0
 
@@ -100,9 +62,6 @@ class PBVSConfig:
         self.slow_after_convergence = bool(self.slow_after_convergence)
         self.convergence_slowdown_frames = max(0, int(self.convergence_slowdown_frames))
         self.convergence_velocity_scale = float(np.clip(self.convergence_velocity_scale, 0.0, 1.0))
-        self.auto_switch_targets = bool(self.auto_switch_targets)
-        self.auto_switch_start_time = max(0.0, float(self.auto_switch_start_time))
-        self.auto_switch_period = max(0.0, float(self.auto_switch_period))
         self.enable_feature_lowpass = bool(self.enable_feature_lowpass)
         self.feature_lowpass_tau = max(0.0, float(self.feature_lowpass_tau))
         self.use_commanded_tcp_pose_estimate = bool(self.use_commanded_tcp_pose_estimate)

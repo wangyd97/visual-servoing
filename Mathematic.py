@@ -1,6 +1,43 @@
 import numpy as np
 
 
+def to_vec6(value, name: str) -> np.ndarray:
+    """
+    Convert a scalar or a length-6 list/tuple/array to an R^6 vector.
+    Scalar values are broadcast to all six components.
+    """
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return np.full(6, float(arr), dtype=float)
+    arr = arr.reshape(-1)
+    if arr.size != 6:
+        raise ValueError(f"{name} must contain 6 values, got {arr.size}: {value}")
+    return arr.astype(float)
+
+
+def vec6_to_str(value, precision: int = 3) -> str:
+    """Format an R^6 parameter vector for readable output."""
+    arr = np.asarray(value, dtype=float).reshape(-1)
+    return "[" + ", ".join(f"{v:.{precision}g}" for v in arr) + "]"
+
+
+def vec6_from_pos_rot(pos_value: float, rot_value: float) -> np.ndarray:
+    """Build a 6D vector from separate position and rotation values."""
+    pos = to_vec3(pos_value, "pos_value")
+    rot = to_vec3(rot_value, "rot_value")
+    return np.concatenate([pos, rot]).astype(float)
+
+
+def to_vec3(value, name: str) -> np.ndarray:
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return np.full(3, float(arr), dtype=float)
+    arr = arr.reshape(-1)
+    if arr.size != 3:
+        raise ValueError(f"{name} must contain 3 values, got {arr.size}: {value}")
+    return arr.astype(float)
+
+
 def sinc(x: float) -> float:
     """sin(x) / x with a smooth small-angle expansion."""
     x = float(x)
@@ -122,7 +159,6 @@ def matrix_from_quat(q: np.ndarray) -> np.ndarray:
     ])
 
 
-# Just for logging, not used in control
 def euler_xyz_from_matrix(R: np.ndarray, degrees: bool = False) -> np.ndarray:
     R = np.asarray(R, dtype=float).reshape(3, 3)
     sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
