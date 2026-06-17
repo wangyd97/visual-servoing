@@ -5,26 +5,26 @@ import numpy as np
 
 def to_vec6(value, name: str) -> np.ndarray:
     """
-    将标量或长度为 6 的 list/tuple/ndarray 转为 R^6 向量。
-    标量会自动扩展为 6 个相同分量。
+    Convert a scalar or a length-6 list/tuple/array to an R^6 vector.
+    Scalar values are broadcast to all six components.
     """
     arr = np.asarray(value, dtype=float)
     if arr.ndim == 0:
         return np.full(6, float(arr), dtype=float)
     arr = arr.reshape(-1)
     if arr.size != 6:
-        raise ValueError(f"{name} 必须是标量或长度为 6 的向量，当前长度为 {arr.size}: {value}")
+        raise ValueError(f"{name} must contain 6 values, got {arr.size}: {value}")
     return arr.astype(float)
 
 
 def vec6_to_str(value, precision: int = 3) -> str:
-    """用于打印 R^6 参数。"""
+    """Format an R^6 parameter vector for readable output."""
     arr = np.asarray(value, dtype=float).reshape(-1)
     return "[" + ", ".join(f"{v:.{precision}g}" for v in arr) + "]"
 
 
 def vec6_from_pos_rot(pos_value: float, rot_value: float) -> np.ndarray:
-    """兼容旧参数：平移/旋转可分别为标量或 3 维向量。"""
+    """Build a 6D vector from separate position and rotation values."""
     pos = to_vec3(pos_value, "pos_value")
     rot = to_vec3(rot_value, "rot_value")
     return np.concatenate([pos, rot]).astype(float)
@@ -36,7 +36,7 @@ def to_vec3(value, name: str) -> np.ndarray:
         return np.full(3, float(arr), dtype=float)
     arr = arr.reshape(-1)
     if arr.size != 3:
-        raise ValueError(f"{name} 必须是标量或长度为 3 的向量，当前长度为 {arr.size}: {value}")
+        raise ValueError(f"{name} must contain 3 values, got {arr.size}: {value}")
     return arr.astype(float)
 
 
@@ -53,35 +53,26 @@ class PBVSConfig:
     pos_threshold: float = 0.005
     rot_threshold: float = 0.02
     stable_frames: int = 10
-<<<<<<< HEAD
     slow_after_convergence: bool = False
     convergence_slowdown_frames: int = 5
     convergence_velocity_scale: float = 0.1
     auto_switch_targets: bool = False
     auto_switch_start_time: float = 0.0
     auto_switch_period: float = 0.0
-=======
-    slow_after_convergence: bool = True
-    convergence_slowdown_frames: int = 5
-    convergence_velocity_scale: float = 0.1
->>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     max_runtime: float = 0.0
 
     max_linear_vel: float = 0.80
     max_angular_vel: float = 0.80
-<<<<<<< HEAD
     enable_feature_lowpass: bool = True
     feature_lowpass_tau: float = 0.02
     use_commanded_tcp_pose_estimate: bool = False
     enable_Rc_lowpass: bool = False
     Rc_lowpass_tau: float = 0.01
-=======
->>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     controller_mode: str = "SOPDPSMC"
 
-    # R6 参数顺序: [x, y, z, rx, ry, rz]
+    # R6 parameter order: [x, y, z, rx, ry, rz]
     kp: object = 1.0
     kd: object = 2.0
 
@@ -95,10 +86,7 @@ class PBVSConfig:
 
     plot_save_path: str = "pbvs_error_plot.png"
     trajectory_plot_save_path: str = ""
-<<<<<<< HEAD
     log_save_path: str = "log.csv"
-=======
->>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     enable_memory_log: bool = True
     enable_final_plots: bool = True
     status_print_interval: int = 1
@@ -112,7 +100,6 @@ class PBVSConfig:
         self.slow_after_convergence = bool(self.slow_after_convergence)
         self.convergence_slowdown_frames = max(0, int(self.convergence_slowdown_frames))
         self.convergence_velocity_scale = float(np.clip(self.convergence_velocity_scale, 0.0, 1.0))
-<<<<<<< HEAD
         self.auto_switch_targets = bool(self.auto_switch_targets)
         self.auto_switch_start_time = max(0.0, float(self.auto_switch_start_time))
         self.auto_switch_period = max(0.0, float(self.auto_switch_period))
@@ -121,8 +108,6 @@ class PBVSConfig:
         self.use_commanded_tcp_pose_estimate = bool(self.use_commanded_tcp_pose_estimate)
         self.enable_Rc_lowpass = bool(self.enable_Rc_lowpass)
         self.Rc_lowpass_tau = max(0.0, float(self.Rc_lowpass_tau))
-=======
->>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.enable_memory_log = bool(self.enable_memory_log)
         self.enable_final_plots = bool(self.enable_final_plots)
         self.status_print_interval = max(1, int(self.status_print_interval))

@@ -10,6 +10,12 @@ from .geometry import project_3d_to_2d
 
 
 def init_realsense():
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    if len(devices) == 0:
+        print("No RealSense device detected.", flush=True)
+        sys.exit(1)
+
     pipeline = rs.pipeline()
     cfg = rs.config()
     cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
@@ -22,7 +28,7 @@ def init_realsense():
                 .as_video_stream_profile().get_intrinsics())
         return pipeline, intr
     except RuntimeError as e:
-        print(f"❌ RealSense 初始化失败: {e}")
+        print(f"RealSense initialization failed: {e}", flush=True)
         sys.exit(1)
 
 
