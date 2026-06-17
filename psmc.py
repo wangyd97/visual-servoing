@@ -20,6 +20,7 @@ class PSMCPDProxy:
         self.u_dot_c = np.zeros(n)
         self._initialized = False
 
+<<<<<<< HEAD
     def _clip_camera_acceleration(self, x: np.ndarray) -> np.ndarray:
         # x = np.asarray(x, dtype=float).reshape(6)
         A_t = float(np.mean(self.A[:3]))
@@ -31,6 +32,25 @@ class PSMCPDProxy:
         scale = max(normalized_size, 1.0)
         # print("scale", x/ scale)
         return x / scale
+=======
+    @staticmethod
+    def _clip_3d(x: np.ndarray, A: float) -> np.ndarray:
+        norm = float(np.linalg.norm(x))
+        if norm <= A or A == float("inf"):
+            return x.copy()
+        return (A / max(norm, A)) * x
+
+    def _clip_camera_acceleration(self, x: np.ndarray) -> np.ndarray:
+        clipped = np.zeros_like(x)
+        # clipped[:3] = self._clip_3d(u_dot_c[:3], self.A[0])
+        # clipped[3:] = self._clip_3d(u_dot_c[3:], self.A[3])
+        a = 1.0
+        for i in range(6):
+            a = min(a, self.A[i] / max(abs(x[i]),self.A[i]))
+        clipped = x * a
+
+        return clipped
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     
 
     def _clip_versa(self, x: np.ndarray, a: float, b: float) -> np.ndarray:
@@ -66,9 +86,15 @@ class PSMCPDProxy:
         return q[1:4].copy()
 
     @classmethod
+<<<<<<< HEAD
     def _make_rotation_feature_nearer(cls, x_ref: np.ndarray, x: np.ndarray) -> np.ndarray:
         out = np.asarray(x, dtype=float).reshape(-1).copy()
         out[3:6] = cls._nearer_quat_vector(x_ref[3:6], out[3:6])
+=======
+    def _make_rotation_feature_nearer(cls, s_ref: np.ndarray, s: np.ndarray) -> np.ndarray:
+        out = np.asarray(s, dtype=float).reshape(-1).copy()
+        out[3:6] = cls._nearer_quat_vector(s_ref[3:6], out[3:6])
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         return out
 
     def reset(self):
@@ -102,23 +128,36 @@ class PSMCPDProxy:
             self.s_p = measured_s.copy()
             self._initialized = True
 
+<<<<<<< HEAD
         # Eq : s_p* = (I + H/T)^-1 (s_d + H s_dot_d + (H/T)s_p,prv).
         self.s_p_star = self.s_p_prv + (
             s_d + self.H * s_dot_d  - self.s_p_prv
         ) / (1.0 + self.H / T)
         # Eq: choose quaternion sign closer to s_p,prv.
+=======
+        # Eq. (42i): s_p* = (I + H/T)^-1 (s_d + H s_dot_d + (H/T)s_p,prv).
+        self.s_p_star = self.s_p_prv + (
+            s_d + self.H * s_dot_d  - self.s_p_prv
+        ) / (1.0 + self.H / T)
+        # Eq. (42i): choose quaternion sign closer to s_p,prv.
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.s_p_star = self._make_rotation_feature_nearer(
             self.s_p_prv,
             self.s_p_star,
         )
 
+<<<<<<< HEAD
         # Eq: alpha_c* = (K + B/T)s_p* - Ks - B(s_dot + s_p,prv/T).
+=======
+        # Eq. (42j): alpha_c* = (K + B/T)s_p* - Ks - B(s_dot + s_p,prv/T).
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.alpha_c_star = (
             (K + B / T) @ self.s_p_star
             - K @ s
             - B @ (s_dot + self.s_p_prv / T)
         )
         if LIMITING_ALPHA:
+<<<<<<< HEAD
         # When setting the LIMITING_ALPHA=False, one limit the acceleration in feature space but not the task-space
             self.alpha_c = self._clip_camera_acceleration(self.alpha_c_star)
             self.u_dot_c = L_inv @ (self.alpha_c - b - N @ u_dot_o)
@@ -135,11 +174,33 @@ class PSMCPDProxy:
             self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
 
         # Eq: s_p = s_p* + (K + B/T)^-1(alpha_c - alpha_c*).
+=======
+            self.alpha_c = self._clip_camera_acceleration(self.alpha_c_star)
+            self.u_dot_c = L_inv @ (self.alpha_c - b - N @ u_dot_o)
+        else:
+        # Eq. (42k): u_dot_c* = L^-1(alpha_c* - b - N u_dot_o).
+            self.u_dot_c_star = L_inv @ (self.alpha_c_star - b - N @ u_dot_o)
+        # Eq. (42l): u_dot_c = Pi_A(u_dot_c*).
+        # Translational and rotational 3D vectors are norm-clipped separately:
+        # clip(x) = A x / max(||x||, A)
+            self.u_dot_c = self._clip_camera_acceleration(self.u_dot_c_star)
+            tmp1 =u_c + T * self.u_dot_c
+            tmp1 = self._clip_versa(tmp1,0.5,1)
+            self.u_dot_c = (tmp1 - u_c) / T
+        # Eq. (42m): alpha_c = alpha_c* + L(u_dot_c - u_dot_c*).
+            self.alpha_c = self.alpha_c_star + L @ (self.u_dot_c - self.u_dot_c_star)
+
+        # Eq. (42n): s_p = s_p* + (K + B/T)^-1(alpha_c - alpha_c*).
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.s_p = self.s_p_star + np.linalg.solve(
             K + B / T,
             self.alpha_c - self.alpha_c_star,
         )
+<<<<<<< HEAD
         # Eq: choose quaternion sign closer to s_p*.
+=======
+        # Eq. (42n): choose quaternion sign closer to s_p*.
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.s_p = self._make_rotation_feature_nearer(
             self.s_p_star,
             self.s_p,
@@ -149,11 +210,18 @@ class PSMCPDProxy:
 
     @property
     def is_accel_saturated(self):
+<<<<<<< HEAD
         A_t = float(np.mean(self.A[:3]))
         A_r = float(np.mean(self.A[3:]))
         linear_ratio = 0.0 if A_t == float("inf") else float(np.linalg.norm(self.u_dot_c_star[:3])) / A_t
         angular_ratio = 0.0 if A_r == float("inf") else float(np.linalg.norm(self.u_dot_c_star[3:])) / A_r
         return float(np.sqrt(linear_ratio**2 + angular_ratio**2)) > 1.0
+=======
+        return (
+            np.linalg.norm(self.u_dot_c_star[:3]) > float(self.A[0])
+            or np.linalg.norm(self.u_dot_c_star[3:]) > float(self.A[3])
+        )
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     @property
     def proxy_position(self):

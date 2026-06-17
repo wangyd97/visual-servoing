@@ -53,22 +53,31 @@ class PBVSConfig:
     pos_threshold: float = 0.005
     rot_threshold: float = 0.02
     stable_frames: int = 10
+<<<<<<< HEAD
     slow_after_convergence: bool = False
     convergence_slowdown_frames: int = 5
     convergence_velocity_scale: float = 0.1
     auto_switch_targets: bool = False
     auto_switch_start_time: float = 0.0
     auto_switch_period: float = 0.0
+=======
+    slow_after_convergence: bool = True
+    convergence_slowdown_frames: int = 5
+    convergence_velocity_scale: float = 0.1
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     max_runtime: float = 0.0
 
     max_linear_vel: float = 0.80
     max_angular_vel: float = 0.80
+<<<<<<< HEAD
     enable_feature_lowpass: bool = True
     feature_lowpass_tau: float = 0.02
     use_commanded_tcp_pose_estimate: bool = False
     enable_Rc_lowpass: bool = False
     Rc_lowpass_tau: float = 0.01
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     controller_mode: str = "SOPDPSMC"
 
@@ -86,7 +95,10 @@ class PBVSConfig:
 
     plot_save_path: str = "pbvs_error_plot.png"
     trajectory_plot_save_path: str = ""
+<<<<<<< HEAD
     log_save_path: str = "log.csv"
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     enable_memory_log: bool = True
     enable_final_plots: bool = True
     status_print_interval: int = 1
@@ -100,6 +112,7 @@ class PBVSConfig:
         self.slow_after_convergence = bool(self.slow_after_convergence)
         self.convergence_slowdown_frames = max(0, int(self.convergence_slowdown_frames))
         self.convergence_velocity_scale = float(np.clip(self.convergence_velocity_scale, 0.0, 1.0))
+<<<<<<< HEAD
         self.auto_switch_targets = bool(self.auto_switch_targets)
         self.auto_switch_start_time = max(0.0, float(self.auto_switch_start_time))
         self.auto_switch_period = max(0.0, float(self.auto_switch_period))
@@ -108,6 +121,8 @@ class PBVSConfig:
         self.use_commanded_tcp_pose_estimate = bool(self.use_commanded_tcp_pose_estimate)
         self.enable_Rc_lowpass = bool(self.enable_Rc_lowpass)
         self.Rc_lowpass_tau = max(0.0, float(self.Rc_lowpass_tau))
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self.enable_memory_log = bool(self.enable_memory_log)
         self.enable_final_plots = bool(self.enable_final_plots)
         self.status_print_interval = max(1, int(self.status_print_interval))

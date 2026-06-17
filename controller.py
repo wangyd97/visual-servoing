@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import csv
 import time
 from pathlib import Path
@@ -7,6 +8,15 @@ import cv2 # pyright: ignore[reportMissingImports]
 import numpy as np
 from rtde_control import RTDEControlInterface as RTDEControl # pyright: ignore[reportMissingImports]
 from rtde_receive import RTDEReceiveInterface as RTDEReceive # pyright: ignore[reportMissingImports]
+=======
+import time
+from typing import List, Optional
+
+import cv2
+import numpy as np
+from rtde_control import RTDEControlInterface as RTDEControl
+from rtde_receive import RTDEReceiveInterface as RTDEReceive
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
 from .config import PBVSConfig, TargetPose
 from .geometry import (
@@ -86,12 +96,15 @@ class PBVSController:
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
         self._last_c_q_oc: Optional[np.ndarray] = None
+<<<<<<< HEAD
         self._last_s = np.full(6, float("nan"))
         self._last_s_d = np.full(6, float("nan"))
         self._last_s_dot = np.zeros(6)
         self._s_lowpass: Optional[np.ndarray] = None
         self._tcp_pose_cmd_est: Optional[np.ndarray] = None
         self._R_base_cam_lowpass: Optional[np.ndarray] = None
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
     def set_targets(self, targets: List[TargetPose]):
         self.targets = targets
@@ -122,12 +135,15 @@ class PBVSController:
         self._u_dot_o_filtered = np.zeros(6)
         self._last_detection = None
         self._last_c_q_oc = None
+<<<<<<< HEAD
         self._last_s = np.full(6, float("nan"))
         self._last_s_d = np.full(6, float("nan"))
         self._last_s_dot = np.zeros(6)
         self._s_lowpass = None
         self._tcp_pose_cmd_est = None
         self._R_base_cam_lowpass = None
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self._last_accel_saturated = False
 
     def _desired_T(self) -> np.ndarray:
@@ -159,16 +175,27 @@ class PBVSController:
         q_des = quat_from_matrix(T_des[:3, :3])
         c_q_oc = quat_from_matrix(T_current[:3, :3])
         c_q_oc = self._make_c_q_oc_continuous(c_q_oc)
+<<<<<<< HEAD
         # print(f"c_q_oc (quat): {c_q_oc}")
+=======
+        print(f"c_q_oc (quat): {c_q_oc}")
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         c_p_oc = T_current[:3, 3]
         s_d = np.concatenate([T_des[:3, 3], q_des[1:4]])
         s = np.concatenate([c_p_oc, c_q_oc[1:4]])
         # print(f"s: {s}")
         L = compute_L(c_p_oc, c_q_oc, R_base_cam)
+<<<<<<< HEAD
         # print(f"R_base_cam:\n{R_base_cam}")
         # print(f"c_q_oc:\n{(c_q_oc)}") 
         # print(f"c_q_oc:\n{euler_xyz_from_matrix(matrix_from_quat(c_q_oc), degrees=True)}") # tranform to euler angles for better interpretability
         # print(f"L:\n{L}")
+=======
+        print(f"R_base_cam:\n{R_base_cam}")
+        # print(f"c_q_oc:\n{(c_q_oc)}") 
+        # print(f"c_q_oc:\n{euler_xyz_from_matrix(matrix_from_quat(c_q_oc), degrees=True)}") # tranform to euler angles for better interpretability
+        print(f"L:\n{L}")
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         try:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
@@ -176,6 +203,7 @@ class PBVSController:
 
         return s, s_d, c_q_oc, c_p_oc, L, L_inv
 
+<<<<<<< HEAD
     def _filter_feature_s(self, s: np.ndarray) -> np.ndarray:
         s = np.asarray(s, dtype=float).reshape(6)
         if not self.cfg.enable_feature_lowpass or self.cfg.feature_lowpass_tau <= 0.0:
@@ -205,6 +233,8 @@ class PBVSController:
         q0 = np.sqrt(max(0.0, 1.0 - qv_norm_sq))
         return c_p_oc, np.array([q0, qv[0], qv[1], qv[2]], dtype=float)
 
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     def _compute_s_dot_by_difference(self, s: np.ndarray) -> np.ndarray:
         """Eq. (42a): obtain s_dot from filtered visual-feature difference."""
         s = np.asarray(s, dtype=float).reshape(6)
@@ -214,7 +244,11 @@ class PBVSController:
         else:
             dt = max(now - self._last_s_diff_time, 1e-4)
             s_dot_raw = (s - self._last_s_for_diff) / dt
+<<<<<<< HEAD
             tau = 0.10
+=======
+            tau = 0.02
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
             beta = tau / (tau + dt)
             self._s_dot_diff_filtered = (
                 beta * self._s_dot_diff_filtered
@@ -225,8 +259,15 @@ class PBVSController:
         return self._s_dot_diff_filtered.copy()
 
     def _filter_u_o(self, u_o_raw: np.ndarray) -> np.ndarray:
+<<<<<<< HEAD
         u_o = u_o_raw.copy()
         tau = 0.05
+=======
+        u_o = np.asarray(u_o_raw, dtype=float).reshape(6).copy()
+        limits = np.array([2.0, 2.0, 2.0, 8.0, 8.0, 8.0])
+        u_o = np.clip(u_o, -limits, limits)
+        tau = 0.12
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         beta = tau / (tau + self.dt)
         self._u_o_filtered = beta * self._u_o_filtered + (1.0 - beta) * u_o
         return self._u_o_filtered.copy()
@@ -258,6 +299,7 @@ class PBVSController:
                   N: np.ndarray, R_base_cam: np.ndarray) -> np.ndarray:
         """Eq. (25): u_dot_c = L^{-1}(alpha_c - b - N u_dot_o)."""
         b = compute_b(c_p_oc, c_q_oc, u_c, u_o, R_base_cam)
+<<<<<<< HEAD
         # b = np.zeros(6)
         return L_inv @ (alpha_c - b - N @ u_dot_o)
 
@@ -270,6 +312,10 @@ class PBVSController:
         saturated = bool(np.any(np.abs(clipped - u_dot_c) > 1e-12))
         return clipped, saturated
 
+=======
+        return L_inv @ (alpha_c - b - N @ u_dot_o)
+
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
         try:
             t_proxy = proxy_pos[:3]
@@ -297,6 +343,7 @@ class PBVSController:
         s, s_d, c_q_oc, c_p_oc, L, L_inv = self._compute_feature_error(
             T_current, R_base_cam
         )
+<<<<<<< HEAD
         s = self._filter_feature_s(s)
         c_p_oc, c_q_oc = self._feature_to_pose_parts(s)
         L = compute_L(c_p_oc, c_q_oc, R_base_cam)
@@ -304,6 +351,8 @@ class PBVSController:
             L_inv = np.linalg.inv(L)
         except np.linalg.LinAlgError:
             L_inv = np.linalg.pinv(L)
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         
         e = s_d - s
         u_c = self._last_u_c.copy()
@@ -314,19 +363,28 @@ class PBVSController:
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
+<<<<<<< HEAD
         u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c)) # This part is calculated by eq. (26)
         # u_o = N_inv @ (s_dot_by_difference - L @ u_c)
         u_dot_o = self._compute_u_dot_o_by_difference(u_o)
         u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
+=======
+        u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c))
+        u_dot_o = self._compute_u_dot_o_by_difference(u_o)
+        # u_o = np.zeros(6)  # temporarily disable using u_o for control, since it's noisy
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         u_dot_o = np.zeros(6)  # temporarily disable using u_dot_o for control, since it's noisy
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
         # Eq. (42g): uo = N^{-1}(s_dot - L uc).
         edot = s_dot_d - s_dot_by_interaction_matrix
+<<<<<<< HEAD
         self._last_s = s.copy()
         self._last_s_d = s_d.copy()
         self._last_s_dot = s_dot_by_interaction_matrix.copy()
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self._last_u_o = u_o.copy()
         mode = self.cfg.controller_mode.upper()
 
@@ -337,12 +395,20 @@ class PBVSController:
             u_dot_c = self._compute_u_dot_c(
                 alpha_c, c_q_oc, c_p_oc, L, L_inv, u_c, u_o, u_dot_o, N, R_base_cam
             )
+<<<<<<< HEAD
             u_dot_c, self._last_accel_saturated = self._clip_direct_camera_acceleration(u_dot_c)
+=======
+            self._last_accel_saturated = False
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
         elif "PSMC" in mode:
             # Eq. (42h): b = b(s, qc, uc, uo).
             b = compute_b(c_p_oc, c_q_oc, u_c, u_o, R_base_cam)
+<<<<<<< HEAD
             # b = np.zeros(6)  
+=======
+            # b = np.zeros(6)  # temporarily disable using b for control, since it's noisy
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
             # Eq. (42i)-(42n): proxy update and projection of u_dot_c*.
             u_dot_c = self._psmc.compute(
                 s=s,
@@ -377,6 +443,7 @@ class PBVSController:
 
         return np.concatenate([v_tcp_base, omega_base])
 
+<<<<<<< HEAD
     def _control_tcp_pose(self, actual_pose: Optional[np.ndarray]) -> Optional[np.ndarray]:
         if not self.cfg.use_commanded_tcp_pose_estimate:
             return actual_pose
@@ -417,6 +484,8 @@ class PBVSController:
         self._R_base_cam_lowpass = R_filtered.copy()
         return R_filtered
 
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     def _detect_or_reuse_tag(self, gray_img):
         should_detect = (
             self._last_detection is None
@@ -431,8 +500,12 @@ class PBVSController:
             return detection
         return self._last_detection
 
+<<<<<<< HEAD
     def process_step(self, gray_img, tcp_pose: np.ndarray = None,
                      log_tcp_pose: np.ndarray = None):
+=======
+    def process_step(self, gray_img, tcp_pose: np.ndarray = None):
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         T_cur, corners, R_cur, t_cur = self._detect_or_reuse_tag(gray_img)
         
         if T_cur is None:
@@ -447,6 +520,7 @@ class PBVSController:
             actual_pose = np.array(self.rtde_r.getActualTCPPose())
         else:
             actual_pose = np.asarray(tcp_pose, dtype=float)
+<<<<<<< HEAD
         logged_pose = (
             np.asarray(log_tcp_pose, dtype=float)
             if log_tcp_pose is not None else actual_pose
@@ -454,6 +528,10 @@ class PBVSController:
         R_base_tcp = matrix_from_rotvec(actual_pose[3:])
         R_base_cam = R_base_tcp @ self.e_R_c
         R_base_cam = self._filter_R_base_cam(R_base_cam)
+=======
+        R_base_tcp = matrix_from_rotvec(actual_pose[3:])
+        R_base_cam = R_base_tcp @ self.e_R_c
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
         self._last_R_base_cam = R_base_cam.copy()
 
         u_c, u_dot_c = self._compute_control(T_cur, R_base_cam)
@@ -509,6 +587,7 @@ class PBVSController:
                 "dcx1": float(des_corners_px[1,0]), "dcy1": float(des_corners_px[1,1]),
                 "dcx2": float(des_corners_px[2,0]), "dcy2": float(des_corners_px[2,1]),
                 "dcx3": float(des_corners_px[3,0]), "dcy3": float(des_corners_px[3,1]),
+<<<<<<< HEAD
                 "tcp_x": float(logged_pose[0]),
                 "tcp_y": float(logged_pose[1]),
                 "tcp_z": float(logged_pose[2]),
@@ -545,6 +624,12 @@ class PBVSController:
                 row[f"sp{i}"] = float(proxy_position[i])
                 row[f"spstar{i}"] = float(proxy_star[i])
                 row[f"proxy_offset{i}"] = float(proxy_offset[i])
+=======
+                "tcp_x": float(tcp_pose[0]) if tcp_pose is not None else float("nan"),
+                "tcp_y": float(tcp_pose[1]) if tcp_pose is not None else float("nan"),
+                "tcp_z": float(tcp_pose[2]) if tcp_pose is not None else float("nan"),
+            })
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
         self._frame_idx += 1
 
@@ -558,6 +643,7 @@ class PBVSController:
         from .plotting import plot_trajectory_figure
         return plot_trajectory_figure(self)
 
+<<<<<<< HEAD
     def save_log_csv(self):
         if not self._error_log:
             print("No log data to save.")
@@ -579,6 +665,8 @@ class PBVSController:
             writer.writerows(self._error_log)
         print(f"Log saved: {log_path}")
 
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
     def run(self, pipeline, init_pose, move_acc: float = 10.0):
         if not self.targets:
             print("❌ 未设置目标")
@@ -592,13 +680,19 @@ class PBVSController:
         self._t0 = time.time()
         self._error_log.clear()
         self._frame_idx = 0
+<<<<<<< HEAD
         auto_switch_started = False
         next_auto_switch_time = None
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
 
         try:
             while True:
                 now = time.time()
+<<<<<<< HEAD
                 elapsed = now - self._t0
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
                 if self.cfg.max_runtime > 0 and (now - self._t0) > self.cfg.max_runtime:
                     print(f"\n⏰ 定时停止")
                     break
@@ -615,15 +709,24 @@ class PBVSController:
                     tcp_pose_now = np.array(self.rtde_r.getActualTCPPose())
                 except Exception:
                     tcp_pose_now = None
+<<<<<<< HEAD
                 tcp_pose_ctrl = self._control_tcp_pose(tcp_pose_now)
 
                 v_cmd, errs, converged, corners, R_cur, t_cur = self.process_step(
                     gray, tcp_pose=tcp_pose_ctrl, log_tcp_pose=tcp_pose_now
+=======
+
+                v_cmd, errs, converged, corners, R_cur, t_cur = self.process_step(
+                    gray, tcp_pose=tcp_pose_now
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
                 )
 
                 if v_cmd is not None:
                     self.rtde_c.speedL(v_cmd, move_acc, self.dt)
+<<<<<<< HEAD
                     self._advance_commanded_tcp_pose(v_cmd)
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
                     if self._frame_idx % self.cfg.status_print_interval == 0:
                         status = "CONVERGED" if converged else "Running"
                         ep, er = errs
@@ -650,6 +753,7 @@ class PBVSController:
                     self._switch_target(next_idx)
                     time.sleep(0.5)
 
+<<<<<<< HEAD
                 if (self.cfg.auto_switch_targets
                         and len(self.targets) > 1
                         and self.cur_target_idx < len(self.targets) - 1):
@@ -673,6 +777,8 @@ class PBVSController:
                             next_auto_switch_time = now + self.cfg.auto_switch_period
                             time.sleep(0.05)
 
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
                 self.rtde_c.waitPeriod(t_start)
 
         except KeyboardInterrupt:
@@ -681,7 +787,10 @@ class PBVSController:
             self.rtde_c.speedStop()
             self.rtde_c.stopScript()
             print(f"\n控制结束")
+<<<<<<< HEAD
             self.save_log_csv()
+=======
+>>>>>>> c9efe9bd81916d8111a5e88d2a4dbc1936aee6cb
             if self.cfg.enable_final_plots:
                 self.plot_error_history()
                 self.plot_trajectory_figure()
