@@ -2,14 +2,15 @@ import sys
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
-from pupil_apriltags import Detector
 
 from .config import PBVSConfig
 from .geometry import project_3d_to_2d
 
 
 def init_realsense():
+    # print("Initializing RealSense...", flush=True)
+    import pyrealsense2 as rs
+
     ctx = rs.context()
     devices = ctx.query_devices()
     if len(devices) == 0:
@@ -66,6 +67,8 @@ def draw_axis_colored(img, K, Rot, t, length=0.05,
 
 class AprilTagEstimator:
     def __init__(self, config: PBVSConfig, intrinsics):
+        from pupil_apriltags import Detector
+
         self.detector = Detector(
             families='tag36h11',
             nthreads=config.apriltag_nthreads,

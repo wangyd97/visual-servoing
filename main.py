@@ -1,5 +1,4 @@
-﻿#updated on 2026-06-02:
-import argparse
+﻿import argparse
 import sys
 from pathlib import Path
 
@@ -67,9 +66,9 @@ def method_params(method: str) -> dict:
             controller_mode="SOPDPSMC",
             kp=150 * np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
             kd=25 * np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
-            proxy_H= 0.5 * np.array([1,1,1,1,1,1]),
-            accel_limit_pos= 10 * np.array([1.0, 1.0, 1.0]),
-            accel_limit_rot= 10 * np.array([1.0, 1.0, 1.0]),
+            proxy_H= 0.6 * np.array([1,1,1,1,1,1]),
+            accel_limit_pos= 8 * np.array([1.0, 1.0, 1.0]),
+            accel_limit_rot= 8 * np.array([1.0, 1.0, 1.0]),
             max_linear_vel=float("inf"),
             max_angular_vel=float("inf"),
         ),
@@ -167,9 +166,19 @@ def main():
     )
     controller.set_targets(build_targets())
 
+    # init_pose = np.array([
+    #     -0.20588217, -0.05717437,  0.420001008,
+    #     -2.50455863, -1.8897531,  -0.01089382,
+    # ])
+
+    # init_pose = np.array([
+    #     -0.25588217, -0.15717437,  0.250001008,
+    #     -2.50455863, -1.8897531,  -0.01089382,
+    # ])
+    
     init_pose = np.array([
-        -0.20588217, -0.05717437,  0.420001008,
-        -2.50455863, -1.8897531,  -0.01089382,
+        -0.25588217, -0.15717437,  0.250001008,
+        3.10924706, -0.43501290,  0.01221673,
     ])
     controller.run(pipeline, init_pose)
 

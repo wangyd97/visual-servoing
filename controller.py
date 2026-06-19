@@ -310,11 +310,11 @@ class PBVSController:
         except np.linalg.LinAlgError:
             N_inv = np.linalg.pinv(N)
         s_dot_by_difference = self._compute_s_dot_by_difference(s)
-        u_o = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c)) # This part is calculated by eq. (26)
-        # u_o = N_inv @ (s_dot_by_difference - L @ u_c)
-        u_dot_o = self._compute_u_dot_o_by_difference(u_o)
-        u_o = np.zeros(6)  
-        u_dot_o = np.zeros(6)  
+        u_o_est = self._filter_u_o(N_inv @ (s_dot_by_difference - L @ u_c)) # This part is calculated by eq. (26)
+        # u_o_est = N_inv @ (s_dot_by_difference - L @ u_c)
+        u_dot_o_est = self._compute_u_dot_o_by_difference(u_o_est)
+        u_o = np.zeros(6)
+        u_dot_o = np.zeros(6)
         s_dot_by_interaction_matrix = L @ u_c + N @ u_o
         K = np.diag(self.cfg.kp)
         B = np.diag(self.cfg.kd)
@@ -323,7 +323,7 @@ class PBVSController:
         self._last_s = s.copy()
         self._last_s_d = s_d.copy()
         self._last_s_dot = s_dot_by_interaction_matrix.copy()
-        self._last_u_o = u_o.copy()
+        self._last_u_o = u_o_est.copy()
         mode = self.cfg.controller_mode.upper()
 
         if mode == "SOPD":
