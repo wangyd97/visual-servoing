@@ -262,8 +262,14 @@ class PBVSController:
         if np.all(np.isinf(limits)):
             return u_dot_c, False
 
-        clipped = np.clip(u_dot_c, -limits, limits)
-        saturated = bool(np.any(np.abs(clipped - u_dot_c) > 1e-12))
+        A_t = float(np.mean(limits[:3]))
+        A_r = float(np.mean(limits[3:]))
+        linear_ratio = 0.0 if np.isinf(A_t) else float(np.linalg.norm(u_dot_c[:3])) / A_t
+        angular_ratio = 0.0 if np.isinf(A_r) else float(np.linalg.norm(u_dot_c[3:])) / A_r
+        normalized_size = float(np.sqrt(linear_ratio**2 + angular_ratio**2))
+        scale = max(normalized_size, 1.0)
+        clipped = u_dot_c / scale
+        saturated = normalized_size > 1.0
         return clipped, saturated
 
     def _proxy_feature_to_T_cam(self, proxy_pos: np.ndarray) -> Optional[np.ndarray]:
@@ -487,6 +493,12 @@ class PBVSController:
                 if np.all(des_corners_3d[:, 2] > 0):
                     des_corners_px = project_3d_to_2d(des_corners_3d, self.estimator.K)
 
+            T_base_tcp_log = np.eye(4)
+            T_base_tcp_log[:3, :3] = matrix_from_rotvec(logged_pose[3:])
+            T_base_tcp_log[:3, 3] = logged_pose[:3]
+            T_base_target = T_base_tcp_log @ self.e_T_c @ T_cur
+            target_rotvec = rotvec_from_matrix(T_base_target[:3, :3])
+
             self._error_log.append({
                 "t": t_now,
                 "err_pos": err_pos * 1000.0,
@@ -526,17 +538,25 @@ class PBVSController:
                 "ctrl_tcp_rx": float(actual_pose[3]),
                 "ctrl_tcp_ry": float(actual_pose[4]),
                 "ctrl_tcp_rz": float(actual_pose[5]),
+                "target_x": float(T_base_target[0, 3]),
+                "target_y": float(T_base_target[1, 3]),
+                "target_z": float(T_base_target[2, 3]),
+                "target_rx": float(target_rotvec[0]),
+                "target_ry": float(target_rotvec[1]),
+                "target_rz": float(target_rotvec[2]),
             })
             is_psmc = "PSMC" in mode
             proxy_position = self._psmc.proxy_position if is_psmc else np.full(6, float("nan"))
             proxy_star = self._psmc.s_p_star.copy() if is_psmc else np.full(6, float("nan"))
             proxy_offset = self._psmc.proxy_offset if is_psmc else np.full(6, float("nan"))
+            u_dot_c_star = self._psmc.u_dot_c_star.copy() if is_psmc else np.full(6, float("nan"))
             for i in range(6):
                 row[f"s{i}"] = float(self._last_s[i])
                 row[f"sd{i}"] = float(self._last_s_d[i])
                 row[f"sdot{i}"] = float(self._last_s_dot[i])
                 row[f"uc{i}"] = float(u_c[i])
                 row[f"udotc{i}"] = float(u_dot_c[i])
+                row[f"udotcstar{i}"] = float(u_dot_c_star[i])
                 row[f"uo{i}"] = float(self._last_u_o[i])
                 row[f"sp{i}"] = float(proxy_position[i])
                 row[f"spstar{i}"] = float(proxy_star[i])
