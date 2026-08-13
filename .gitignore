@@ -1,8 +1,21 @@
 __pycache__/
 *.py[cod]
 
-csv_data/*.csv
-csv_data/*.png
+# Local experiment data and generated results
+csv_data/
+data/
 exp_figures/
+figures/
+tables/
+*.eps
+
+# Matplotlib/LaTeX cache
+.mplconfig/
+
+# Plotting/export helper scripts
+draw_*.py
+Tools/draw_*.py
+plotting.py
+convert_png_to_pdf.py
 
 .DS_Store
