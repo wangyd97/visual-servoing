@@ -1,6 +1,6 @@
 # visual-servoing
 Responsive yet overdamped visual servoing, with high-speed dynamics and safety.
-
+Now the paper is submitted to IEEE RA-L, the preprint version will be coming soon.
 ## Main Files
 
 | File | Description |
